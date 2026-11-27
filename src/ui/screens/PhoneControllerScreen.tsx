@@ -10,6 +10,7 @@ import {
   Maximize2,
   Minimize2,
   Monitor,
+  MoreHorizontal,
   PlusCircle,
   RotateCcw,
   Send,
@@ -17,6 +18,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  ZoomIn,
 } from 'lucide-react';
 import {
   getCardLabel,
@@ -42,7 +44,7 @@ import { ActionLog } from '../components/ActionLog';
 import { GuardrailModal, type GuardrailPrompt } from '../components/GuardrailModal';
 import { HandSummaryModal } from '../components/HandSummaryModal';
 import { MeldZone } from '../components/MeldZone';
-import { MobileCardHand } from '../components/MobileCardHand';
+import { MobileCardHand, type MobileCardScale } from '../components/MobileCardHand';
 import { PartnerPromptModal } from '../components/PartnerPromptModal';
 import { PlayingCard } from '../components/PlayingCard';
 import { RulesScoringDrawer } from '../components/RulesScoringDrawer';
@@ -63,9 +65,21 @@ export interface PhoneControllerScreenProps {
 
 type MobileTab = 'hand' | 'table' | 'melds';
 
+const SCALE_STORAGE_KEY = 'canasta_mobile_card_scale_v1';
+
+function loadSavedScale(): MobileCardScale {
+  try {
+    const saved = window.localStorage.getItem(SCALE_STORAGE_KEY);
+    if (saved === 'm' || saved === 'l' || saved === 'xl') return saved;
+  } catch {
+    // ignore
+  }
+  return 'l'; // Default to Large TV-glance-friendly cards!
+}
+
 /**
  * Purpose-built 3-Tab Mobile Phone Controller:
- *  - Tab 1 (Hand): Rank-grouped touch-first hand canvas + single-row thumb action dock
+ *  - Tab 1 (Hand): Large swipeable card carousel (M / L / XL scale) + Rank Mini-Map + big thumb dock
  *  - Tab 2 (Table): Full-size Stock & Discard Pile + Turn Order seats + Live Log
  *  - Tab 3 (Melds): Selectable Team / Player Meld Inspector (with direct tap-to-add)
  */
@@ -81,6 +95,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
   onLeaveRoom,
 }) => {
   const [tab, setTab] = useState<MobileTab>('hand');
+  const [cardScale, setCardScale] = useState<MobileCardScale>(loadSavedScale);
   const [selectedMeldTeamId, setSelectedMeldTeamId] = useState<TeamId>(
     view.viewerTeamId,
   );
@@ -89,9 +104,21 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
   const [takePileMode, setTakePileMode] = useState(false);
   const [takePileExtraMelds, setTakePileExtraMelds] = useState<MeldDraftItem[]>([]);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [guardrail, setGuardrail] = useState<GuardrailPrompt | null>(null);
 
   const fullscreen = useFullscreen();
+
+  const cycleScale = () => {
+    const order: MobileCardScale[] = ['m', 'l', 'xl'];
+    const next = order[(order.indexOf(cardScale) + 1) % order.length];
+    setCardScale(next);
+    try {
+      window.localStorage.setItem(SCALE_STORAGE_KEY, next);
+    } catch {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -327,7 +354,6 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
     ? view.players.find((p) => p.id === view.partnerGoOut!.askedByPlayerId)?.name ?? 'Partner'
     : 'Partner';
 
-  // Compute Guided Take-Pile totals
   const topCard = view.discardPile.topCard;
   const takePileExtraPts = takePileExtraMelds.reduce(
     (sum, m) => sum + m.cardIds.reduce((s, id) => s + getCardPoints(handMap.get(id)!), 0),
@@ -352,80 +378,77 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
 
   return (
     <div className="flex h-dvh w-full flex-col casino-felt overflow-hidden">
-      {/* Ultra-Slim Mobile Top Rail */}
-      <header className="felt-rail flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
+      {/* Bold, Easy-to-Tap Mobile Top Rail (with prominent labeled Size & Fullscreen pills) */}
+      <header className="felt-rail flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2 [@media(max-height:500px)]:py-1">
         <div className="flex items-center gap-2 min-w-0">
           <span
-            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
+            className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-black uppercase tracking-wide ${
               view.legalHints.isViewerTurn
                 ? 'bg-amber-400 text-stone-950 shadow'
-                : 'bg-black/45 text-emerald-200/80 border border-white/10'
+                : 'bg-black/45 text-emerald-200/85 border border-white/15'
             }`}
           >
             {view.legalHints.isViewerTurn
               ? view.phase === 'DRAW'
-                ? 'Your Turn • Draw'
+                ? 'Draw'
                 : 'Your Turn'
-              : `${activePlayer?.name ?? 'Waiting'}`}
+              : activePlayer?.name.split(' ')[0] ?? 'Wait'}
           </span>
-          <span className="truncate text-xs font-bold text-white">
-            {viewerPlayer.name}{' '}
-            <span className="font-normal text-emerald-200/75">
-              ({myTeam.cumulativeScore})
-            </span>
+          <span className="truncate text-sm font-extrabold text-white">
+            {viewerPlayer.name}
           </span>
         </div>
 
-        <div className="flex items-center gap-1">
-          {fullscreen.isSupported && (
-            <button
-              type="button"
-              onClick={() => void fullscreen.toggleFullscreen()}
-              title={fullscreen.isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-              className="rounded-lg border border-amber-300/35 bg-amber-400/15 p-1.5 text-amber-200 hover:bg-amber-400/25 cursor-pointer"
-            >
-              {fullscreen.isFullscreen ? (
-                <Minimize2 className="h-3.5 w-3.5" />
-              ) : (
-                <Maximize2 className="h-3.5 w-3.5" />
-              )}
-            </button>
-          )}
+        {/* Large, clear labeled controls */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
-            onClick={onToggleSound}
-            title={soundMuted ? 'Unmute sounds' : 'Mute sounds'}
-            className="rounded-lg border border-white/15 bg-white/5 p-1.5 text-emerald-100 hover:bg-white/10 cursor-pointer"
+            onClick={cycleScale}
+            title="Change card size (M / L / XL)"
+            className="inline-flex h-10 [@media(max-height:500px)]:h-8 items-center gap-1 rounded-xl border-2 border-emerald-300/60 bg-emerald-500/25 px-3 text-xs sm:text-sm font-black text-emerald-100 shadow-sm active:scale-95 cursor-pointer"
           >
-            {soundMuted ? (
-              <VolumeX className="h-3.5 w-3.5 text-rose-300" />
+            <ZoomIn className="h-4 w-4 text-emerald-200" />
+            <span>Size {cardScale.toUpperCase()}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (fullscreen.isSupported) {
+                void fullscreen.toggleFullscreen();
+              } else {
+                setMenuOpen(true);
+              }
+            }}
+            title={
+              fullscreen.isSupported
+                ? fullscreen.isFullscreen
+                  ? 'Exit Fullscreen'
+                  : 'Enter Fullscreen'
+                : 'Full Screen Tips'
+            }
+            className="inline-flex h-10 [@media(max-height:500px)]:h-8 items-center gap-1 rounded-xl border-2 border-amber-300/75 bg-amber-400/25 px-3 text-xs sm:text-sm font-black text-amber-100 shadow-sm active:scale-95 cursor-pointer"
+          >
+            {fullscreen.isFullscreen ? (
+              <>
+                <Minimize2 className="h-4 w-4" />
+                <span>Exit</span>
+              </>
             ) : (
-              <Volume2 className="h-3.5 w-3.5 text-amber-300" />
+              <>
+                <Maximize2 className="h-4 w-4" />
+                <span>Full</span>
+              </>
             )}
           </button>
+
           <button
             type="button"
-            onClick={() => setRulesOpen(true)}
-            title="Rules & Scoring"
-            className="rounded-lg border border-white/15 bg-white/5 p-1.5 text-amber-200 hover:bg-white/10 cursor-pointer"
+            onClick={() => setMenuOpen(true)}
+            aria-label="More options (Sound, Rules, Table Mode, Leave)"
+            className="inline-flex h-10 w-10 [@media(max-height:500px)]:h-8 [@media(max-height:500px)]:w-8 items-center justify-center rounded-xl border border-white/25 bg-white/10 text-white active:scale-95 cursor-pointer"
           >
-            <BookOpen className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={onSwitchToFullTable}
-            title="Switch to Full Desktop Table"
-            className="rounded-lg border border-white/15 bg-white/5 p-1.5 text-emerald-100 hover:bg-white/10 cursor-pointer"
-          >
-            <Monitor className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={onLeaveRoom}
-            title="Leave Room"
-            className="rounded-lg border border-white/15 bg-white/5 p-1.5 text-emerald-100 hover:bg-white/10 cursor-pointer"
-          >
-            <LogOut className="h-3.5 w-3.5" />
+            <MoreHorizontal className="h-5 w-5" />
           </button>
         </div>
       </header>
@@ -434,10 +457,10 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
       {toast && (
         <div
           key={toast.id}
-          className="toast-float-in pointer-events-none fixed top-12 left-1/2 z-40 w-[92vw] max-w-md"
+          className="toast-float-in pointer-events-none fixed top-14 left-1/2 z-40 w-[92vw] max-w-md"
         >
           <div
-            className={`pointer-events-auto flex items-center justify-between gap-2 rounded-2xl border px-3.5 py-2 text-xs font-bold shadow-xl backdrop-blur-md ${
+            className={`pointer-events-auto flex items-center justify-between gap-2 rounded-2xl border px-4 py-2.5 text-xs sm:text-sm font-bold shadow-xl backdrop-blur-md ${
               toast.kind === 'error'
                 ? 'border-rose-400/75 bg-rose-950/95 text-rose-100'
                 : toast.kind === 'red_three'
@@ -446,27 +469,27 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
             }`}
           >
             <span>{toast.message}</span>
-            <button type="button" onClick={onDismissToast} className="p-0.5">
-              <X className="h-3.5 w-3.5" />
+            <button type="button" onClick={onDismissToast} className="p-1">
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
       )}
 
-      {/* TAB 1: HAND VIEW (Focused card canvas + clean thumb dock) */}
+      {/* TAB 1: HAND VIEW (Big Swipeable Carousel + Rank Mini-Map + Big Thumb Dock) */}
       {tab === 'hand' && (
         <>
-          <main className="flex-1 overflow-y-auto px-2.5 py-2 flex flex-col justify-between gap-2">
-            {/* Guided Take-Discard-Pile Banner (only mounted when claiming pile) */}
+          <main className="flex-1 overflow-y-auto py-1.5 flex flex-col justify-between gap-1.5">
+            {/* Guided Take-Discard-Pile Banner */}
             {takePileMode && topCard && (
-              <div className="rounded-2xl border border-amber-400/60 bg-[#133522] p-3 shadow-lg">
+              <div className="mx-3 rounded-2xl border border-amber-400/60 bg-[#133522] p-3 shadow-lg">
                 <div className="flex items-center gap-2.5">
                   <PlayingCard card={topCard} size="xs" />
                   <div className="min-w-0 flex-1">
                     <div className="text-xs font-extrabold text-amber-300">
                       Taking Discard ({view.discardPile.count} cards)
                     </div>
-                    <div className="text-[11px] text-emerald-100/90 leading-snug">
+                    <div className="text-xs text-emerald-100/90 leading-snug">
                       {view.discardPile.isFrozenForViewer
                         ? `Frozen: tap 2 natural ${topCard.rank}s in hand.`
                         : canAddTopToExistingMeld
@@ -475,7 +498,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                     </div>
                     {needsInitial && (
                       <div
-                        className={`mt-0.5 text-[11px] font-bold ${
+                        className={`mt-0.5 text-xs font-bold ${
                           takePileMeetsInitial ? 'text-emerald-300' : 'text-amber-300'
                         }`}
                       >
@@ -491,13 +514,13 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                       setTakePileExtraMelds([]);
                       setSelectedIds(new Set());
                     }}
-                    className="rounded-lg bg-white/10 p-1.5 text-emerald-100 cursor-pointer"
+                    className="rounded-xl bg-white/10 p-2 text-emerald-100 cursor-pointer"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-5 w-5" />
                   </button>
                 </div>
 
-                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                <div className="mt-2.5 flex flex-wrap gap-2">
                   {canAddTopToExistingMeld && !view.discardPile.isFrozenForViewer && (
                     <button
                       type="button"
@@ -512,7 +535,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                         });
                         setTakePileMode(false);
                       }}
-                      className="flex-1 rounded-xl bg-emerald-400 px-3 py-2 text-xs font-extrabold text-stone-950 cursor-pointer"
+                      className="flex-1 rounded-xl bg-emerald-400 px-3 py-2.5 text-xs font-extrabold text-stone-950 cursor-pointer"
                     >
                       Add to {canAddTopToExistingMeld.rank}s &amp; Take
                     </button>
@@ -533,7 +556,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                         ]);
                         setSelectedIds(new Set());
                       }}
-                      className="rounded-xl border border-amber-300/50 bg-amber-400/15 px-3 py-2 text-xs font-bold text-amber-200 cursor-pointer"
+                      className="rounded-xl border border-amber-300/50 bg-amber-400/15 px-3 py-2.5 text-xs font-bold text-amber-200 cursor-pointer"
                     >
                       + Stage {canStageSelectedAsNewMeld.label}
                     </button>
@@ -557,7 +580,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                       setTakePileExtraMelds([]);
                       setSelectedIds(new Set());
                     }}
-                    className="flex-1 rounded-xl bg-amber-400 px-3 py-2 text-xs font-extrabold text-stone-950 disabled:opacity-40 cursor-pointer"
+                    className="flex-1 rounded-xl bg-amber-400 px-3 py-2.5 text-xs font-extrabold text-stone-950 disabled:opacity-40 cursor-pointer"
                   >
                     Confirm Take ({takePileTotalPts} pts)
                   </button>
@@ -565,9 +588,9 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
               </div>
             )}
 
-            {/* Staged Multi-Meld Pill Strip (only mounted when staging initial/multiple melds) */}
+            {/* Staged Multi-Meld Pill Strip */}
             {stagedMelds.length > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300/40 bg-amber-400/12 px-3 py-2 text-xs">
+              <div className="mx-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300/45 bg-amber-400/15 px-3 py-2 text-xs">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="font-bold text-amber-200">
                     Staged ({stagedPoints}
@@ -577,7 +600,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                   {stagedMelds.map((sm, idx) => (
                     <span
                       key={idx}
-                      className="rounded bg-black/40 px-1.5 py-0.5 text-[11px] text-amber-100"
+                      className="rounded bg-black/40 px-2 py-0.5 font-bold text-amber-100"
                     >
                       {sm.label}
                     </span>
@@ -595,26 +618,27 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                       setStagedMelds([]);
                       setSelectedIds(new Set());
                     }}
-                    className="inline-flex items-center gap-1 rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-extrabold text-stone-950 cursor-pointer"
+                    className="inline-flex items-center gap-1 rounded-xl bg-amber-400 px-3.5 py-2 text-xs font-extrabold text-stone-950 cursor-pointer"
                   >
-                    <Check className="h-3.5 w-3.5" /> Commit
+                    <Check className="h-4 w-4" /> Commit
                   </button>
                   <button
                     type="button"
                     onClick={() => setStagedMelds([])}
-                    className="rounded-lg bg-white/10 p-1.5 text-emerald-100 cursor-pointer"
+                    className="rounded-xl bg-white/10 p-2 text-emerald-100 cursor-pointer"
                     title="Clear staged melds"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Rank-Grouped Touch Hand */}
-            <div className="my-auto">
+            {/* Large Swipeable Card Carousel + Rank Mini-Map */}
+            <div className="my-auto w-full">
               <MobileCardHand
                 cards={view.viewerHand}
+                scale={cardScale}
                 selectedIds={selectedIds}
                 stagedIds={stagedCardIds}
                 newCardIds={newCardIds}
@@ -629,10 +653,10 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
               />
             </div>
 
-            {/* Multiple-Meld Quick Target Chips (when tapping a wild card that fits >1 meld) */}
+            {/* Multiple-Meld Quick Target Chips */}
             {targetableMeldIds.size > 1 && (
-              <div className="flex flex-wrap items-center justify-center gap-1.5 rounded-xl border border-sky-300/35 bg-sky-950/50 px-2.5 py-1.5 text-xs">
-                <span className="font-semibold text-sky-200">Add to:</span>
+              <div className="mx-3 flex flex-wrap items-center justify-center gap-2 rounded-xl border border-sky-300/40 bg-sky-950/60 px-3 py-2 text-xs">
+                <span className="font-bold text-sky-200">Add to:</span>
                 {myTeam.melds
                   .filter((m) => targetableMeldIds.has(m.id))
                   .map((m) => (
@@ -640,7 +664,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                       key={m.id}
                       type="button"
                       onClick={() => handleAddToMeldWithGuardrail(m)}
-                      className="rounded-lg bg-sky-400 px-2.5 py-1 font-extrabold text-stone-950 cursor-pointer"
+                      className="rounded-xl bg-sky-400 px-3 py-1.5 font-extrabold text-stone-950 cursor-pointer"
                     >
                       + {m.rank}s
                     </button>
@@ -649,19 +673,19 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
             )}
           </main>
 
-          {/* Single-Row Thumb Action Dock (pinned cleanly above Bottom Tabs) */}
+          {/* Big Single-Row Thumb Action Dock */}
           {!takePileMode && (
-            <div className="shrink-0 border-t border-white/10 bg-black/40 px-3 py-2">
+            <div className="shrink-0 border-t border-white/15 bg-black/45 px-3 py-2.5 [@media(max-height:500px)]:py-1.5">
               {view.legalHints.partnerGoOutStatus === 'PENDING' ? (
-                <div className="py-1.5 text-center text-xs font-semibold text-amber-200">
+                <div className="py-2 text-center text-sm font-bold text-amber-200">
                   Waiting for partner&apos;s answer…
                 </div>
               ) : !view.legalHints.isViewerTurn ? (
-                <div className="flex items-center justify-between text-xs text-emerald-100/80 py-1">
+                <div className="flex items-center justify-between text-sm text-emerald-100/85 py-1">
                   <span>
                     Waiting for <strong className="text-white">{activePlayer?.name}</strong>…
                   </span>
-                  <span className="text-[11px] text-amber-200/80">
+                  <span className="text-xs font-bold text-amber-200/90">
                     Canastas: {view.legalHints.viewerCanastas}/{view.legalHints.canastasRequired}
                   </span>
                 </div>
@@ -673,11 +697,11 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                       onClick={() =>
                         onDispatch({ type: 'DRAW_STOCK', playerId: view.viewerId })
                       }
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-400 px-3 py-2.5 text-sm font-extrabold text-stone-950 shadow cursor-pointer"
+                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-400 px-4 py-3 [@media(max-height:500px)]:py-2 text-base font-black text-stone-950 shadow-lg active:scale-[0.98] cursor-pointer"
                     >
-                      <Layers className="h-4 w-4" />
+                      <Layers className="h-5 w-5" />
                       Draw {Math.min(view.ruleset.drawCount, view.stockCount)}
-                      <span className="text-[11px] font-bold opacity-75">
+                      <span className="text-xs font-bold opacity-75">
                         ({view.stockCount})
                       </span>
                     </button>
@@ -687,10 +711,10 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                     <button
                       type="button"
                       onClick={startGuidedTakePile}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-300/60 bg-emerald-500/25 px-3 py-2.5 text-sm font-extrabold text-emerald-100 cursor-pointer"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-2xl border-2 border-emerald-300/70 bg-emerald-500/25 px-3 py-3 [@media(max-height:500px)]:py-2 text-base font-black text-emerald-100 active:scale-[0.98] cursor-pointer"
                     >
                       Take {getCardLabel(topCard)}
-                      <span className="text-[11px] opacity-80">
+                      <span className="text-xs opacity-85">
                         ({view.discardPile.count})
                       </span>
                     </button>
@@ -703,7 +727,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                           playerId: view.viewerId,
                         })
                       }
-                      className="flex-1 rounded-xl bg-rose-500 px-3 py-2.5 text-sm font-extrabold text-white cursor-pointer"
+                      className="flex-1 rounded-2xl bg-rose-500 px-4 py-3 text-base font-black text-white cursor-pointer"
                     >
                       Pass (End Hand)
                     </button>
@@ -719,22 +743,21 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                         })
                       }
                       title="Ask Partner to Go Out"
-                      className="shrink-0 rounded-xl border border-amber-300/45 bg-amber-400/15 p-2.5 text-amber-200 cursor-pointer"
+                      className="shrink-0 rounded-2xl border border-amber-300/50 bg-amber-400/15 p-3 text-amber-200 cursor-pointer"
                     >
-                      <HelpCircle className="h-4 w-4" />
+                      <HelpCircle className="h-5 w-5" />
                     </button>
                   )}
                 </div>
               ) : (
-                /* MELD_OR_DISCARD Thumb Dock */
                 <div className="flex items-center gap-2">
                   {selectedCards.length >= 3 && canStageSelectedAsNewMeld.valid && (
                     <button
                       type="button"
                       onClick={handleStageSelectedMeld}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-400 px-3 py-2.5 text-sm font-extrabold text-stone-950 shadow cursor-pointer"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-400 px-4 py-3 text-base font-black text-stone-950 shadow-lg active:scale-[0.98] cursor-pointer"
                     >
-                      <PlusCircle className="h-4 w-4" />
+                      <PlusCircle className="h-5 w-5" />
                       {needsInitial ? 'Stage' : 'Meld'} {canStageSelectedAsNewMeld.label}
                     </button>
                   )}
@@ -743,9 +766,9 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                     <button
                       type="button"
                       onClick={() => handleAddToMeldWithGuardrail(matchingSingleMeld)}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-sky-400 px-3 py-2.5 text-sm font-extrabold text-stone-950 shadow cursor-pointer"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-2xl bg-sky-400 px-4 py-3 text-base font-black text-stone-950 shadow-lg active:scale-[0.98] cursor-pointer"
                     >
-                      <PlusCircle className="h-4 w-4" />
+                      <PlusCircle className="h-5 w-5" />
                       Add to {matchingSingleMeld.rank}s
                     </button>
                   )}
@@ -754,18 +777,18 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                     <button
                       type="button"
                       onClick={handleDiscardSelected}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-rose-500 px-3 py-2.5 text-sm font-extrabold text-white shadow cursor-pointer"
+                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-500 px-4 py-3 [@media(max-height:500px)]:py-2 text-base font-black text-white shadow-lg active:scale-[0.98] cursor-pointer"
                     >
-                      <Send className="h-4 w-4" />
+                      <Send className="h-5 w-5" />
                       Discard {getCardLabel(selectedCards[0])}
                     </button>
                   )}
 
                   {selectedCards.length === 0 && stagedMelds.length === 0 && (
-                    <div className="flex-1 text-xs text-emerald-100/80">
+                    <div className="flex-1 py-1 text-sm font-medium text-emerald-100/85">
                       {needsInitial
-                        ? `Tap cards to meld (Initial: ${requiredInitial} pts) or discard`
-                        : 'Tap cards to meld, add, or discard'}
+                        ? `Swipe & tap cards (Initial: ${requiredInitial} pts) or discard`
+                        : 'Swipe & tap cards to meld, add, or discard'}
                     </div>
                   )}
 
@@ -773,7 +796,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                     <button
                       type="button"
                       onClick={() => setSelectedIds(new Set())}
-                      className="shrink-0 rounded-xl border border-white/15 bg-white/5 px-2.5 py-2.5 text-xs font-semibold text-emerald-100 cursor-pointer"
+                      className="shrink-0 rounded-2xl border border-white/20 bg-white/10 px-3.5 py-3 text-sm font-bold text-emerald-100 cursor-pointer"
                     >
                       Clear
                     </button>
@@ -789,9 +812,9 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                         })
                       }
                       title="Undo Melds This Turn"
-                      className="shrink-0 rounded-xl border border-amber-300/40 bg-amber-400/15 p-2.5 text-amber-200 cursor-pointer"
+                      className="shrink-0 rounded-2xl border border-amber-300/50 bg-amber-400/15 p-3 text-amber-200 cursor-pointer"
                     >
-                      <RotateCcw className="h-4 w-4" />
+                      <RotateCcw className="h-5 w-5" />
                     </button>
                   )}
 
@@ -805,9 +828,9 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                         })
                       }
                       title="Ask Partner to Go Out"
-                      className="shrink-0 rounded-xl border border-amber-300/40 bg-amber-400/15 p-2.5 text-amber-200 cursor-pointer"
+                      className="shrink-0 rounded-2xl border border-amber-300/50 bg-amber-400/15 p-3 text-amber-200 cursor-pointer"
                     >
-                      <HelpCircle className="h-4 w-4" />
+                      <HelpCircle className="h-5 w-5" />
                     </button>
                   )}
                 </div>
@@ -820,7 +843,6 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
       {/* TAB 2: TABLE VIEW (Stock, Discard Pile, Seats & Log) */}
       {tab === 'table' && (
         <main className="flex-1 overflow-y-auto px-3.5 py-3 flex flex-col gap-3.5">
-          {/* Big Stock & Discard Centerpiece */}
           <div className="rounded-2xl border border-emerald-200/15 bg-black/25 py-5 px-3">
             <StockAndDiscard
               stockCount={view.stockCount}
@@ -838,7 +860,6 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
             />
           </div>
 
-          {/* All Players Turn-Order Grid */}
           <div className="grid grid-cols-2 gap-2">
             {view.players.map((p) => {
               const team = getTeamById(view.teams, p.teamId);
@@ -846,32 +867,32 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
               return (
                 <div
                   key={p.id}
-                  className={`rounded-xl border px-3 py-2 ${
+                  className={`rounded-xl border px-3 py-2.5 ${
                     p.isActive
                       ? 'border-amber-400 bg-amber-400/15'
                       : 'border-white/10 bg-black/25'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-1">
-                    <span className="truncate text-xs font-bold text-white">
+                    <span className="truncate text-sm font-bold text-white">
                       {p.name}
                     </span>
                     {p.isActive && (
-                      <span className="rounded bg-amber-400 px-1.5 py-[1px] text-[9px] font-black text-stone-950">
+                      <span className="rounded bg-amber-400 px-1.5 py-0.5 text-[10px] font-black text-stone-950">
                         TURN
                       </span>
                     )}
                   </div>
-                  <div className="mt-1 flex items-center justify-between text-[11px] text-emerald-100/80">
+                  <div className="mt-1 flex items-center justify-between text-xs text-emerald-100/85">
                     <span>
                       <strong className="text-white">{p.handCount}</strong> cards
                     </span>
-                    <span className="font-semibold text-amber-200">
+                    <span className="font-bold text-amber-200">
                       {team.cumulativeScore} pts
                     </span>
                   </div>
                   {seatMeta?.occupantKind === 'human' && !seatMeta.connected && (
-                    <div className="mt-0.5 text-[10px] font-semibold text-rose-300">
+                    <div className="mt-0.5 text-[11px] font-semibold text-rose-300">
                       Reconnecting…
                     </div>
                   )}
@@ -884,11 +905,10 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
         </main>
       )}
 
-      {/* TAB 3: MELDS INSPECTOR (Selectable Player / Team Pills) */}
+      {/* TAB 3: MELDS INSPECTOR */}
       {tab === 'melds' && (
         <main className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
-          {/* Team / Player Selector Pills */}
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {view.teams.map((team) => {
               const isMine = team.id === view.viewerTeamId;
               const active = inspectedTeam.id === team.id;
@@ -897,21 +917,21 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
                   key={team.id}
                   type="button"
                   onClick={() => setSelectedMeldTeamId(team.id)}
-                  className={`flex-1 min-w-[44%] rounded-xl border px-3 py-2 text-left transition cursor-pointer ${
+                  className={`flex-1 min-w-[44%] rounded-xl border px-3.5 py-2.5 text-left transition cursor-pointer ${
                     active
                       ? 'border-amber-400 bg-amber-400/20 text-white shadow'
                       : 'border-white/15 bg-black/25 text-emerald-100/80 hover:bg-black/40'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-1">
-                    <span className="truncate text-xs font-extrabold">
-                      {isMine ? `My Melds` : team.name}
+                    <span className="truncate text-sm font-extrabold">
+                      {isMine ? 'My Melds' : team.name}
                     </span>
-                    <span className="rounded bg-black/40 px-1.5 py-0.5 text-[10px] font-bold text-amber-200">
+                    <span className="rounded bg-black/40 px-2 py-0.5 text-xs font-bold text-amber-200">
                       {team.melds.length}
                     </span>
                   </div>
-                  <div className="mt-0.5 text-[10px] text-emerald-200/75">
+                  <div className="mt-0.5 text-xs text-emerald-200/75">
                     {team.cumulativeScore.toLocaleString()} pts •{' '}
                     {team.melds.filter((m) => m.isCanasta).length} Canasta(s)
                   </div>
@@ -921,7 +941,7 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
           </div>
 
           {inspectedTeam.id === view.viewerTeamId && targetableMeldIds.size > 0 && (
-            <div className="rounded-xl border border-amber-300/40 bg-amber-400/15 px-3 py-2 text-xs font-semibold text-amber-200">
+            <div className="rounded-xl border border-amber-300/40 bg-amber-400/15 px-3.5 py-2.5 text-xs font-bold text-amber-200">
               Tap any highlighted meld below to add your {selectedCards.length} selected card(s).
             </div>
           )}
@@ -950,51 +970,190 @@ export const PhoneControllerScreen: React.FC<PhoneControllerScreenProps> = ({
         </main>
       )}
 
-      {/* Bottom 3-Tab Navigation Bar */}
+      {/* Generous Bottom 3-Tab Navigation Bar (auto-compacts horizontally in short landscape) */}
       <nav className="felt-rail grid shrink-0 grid-cols-3 border-t pb-[env(safe-area-inset-bottom)]">
         <button
           type="button"
           onClick={() => setTab('hand')}
-          className={`flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-bold cursor-pointer ${
+          className={`flex flex-col [@media(max-height:500px)]:flex-row items-center justify-center gap-0.5 [@media(max-height:500px)]:gap-1.5 py-2.5 [@media(max-height:500px)]:py-1.5 text-xs font-extrabold cursor-pointer ${
             tab === 'hand'
               ? 'bg-amber-400/15 text-amber-300 border-t-2 border-amber-400'
               : 'text-emerald-200/75'
           }`}
         >
-          <Hand className="h-4 w-4" />
+          <Hand className="h-5 w-5 [@media(max-height:500px)]:h-4 [@media(max-height:500px)]:w-4" />
           <span>Hand ({view.viewerHand.length})</span>
         </button>
 
         <button
           type="button"
           onClick={() => setTab('table')}
-          className={`flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-bold cursor-pointer ${
+          className={`flex flex-col [@media(max-height:500px)]:flex-row items-center justify-center gap-0.5 [@media(max-height:500px)]:gap-1.5 py-2.5 [@media(max-height:500px)]:py-1.5 text-xs font-extrabold cursor-pointer ${
             tab === 'table'
               ? 'bg-amber-400/15 text-amber-300 border-t-2 border-amber-400'
               : 'text-emerald-200/75'
           }`}
         >
-          <Layers className="h-4 w-4" />
+          <Layers className="h-5 w-5 [@media(max-height:500px)]:h-4 [@media(max-height:500px)]:w-4" />
           <span>
             {topCard
               ? `Discard ${getCardLabel(topCard)} (${view.discardPile.count})`
-              : `Discard (0)`}
+              : 'Discard (0)'}
           </span>
         </button>
 
         <button
           type="button"
           onClick={() => setTab('melds')}
-          className={`flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-bold cursor-pointer ${
+          className={`flex flex-col [@media(max-height:500px)]:flex-row items-center justify-center gap-0.5 [@media(max-height:500px)]:gap-1.5 py-2.5 [@media(max-height:500px)]:py-1.5 text-xs font-extrabold cursor-pointer ${
             tab === 'melds'
               ? 'bg-amber-400/15 text-amber-300 border-t-2 border-amber-400'
               : 'text-emerald-200/75'
           }`}
         >
-          <LayoutGrid className="h-4 w-4" />
+          <LayoutGrid className="h-5 w-5 [@media(max-height:500px)]:h-4 [@media(max-height:500px)]:w-4" />
           <span>Melds ({totalTableMelds})</span>
         </button>
       </nav>
+
+      {/* Clean Mobile Options Sheet (large readable buttons for Sound, Rules, Full Table, Fullscreen, Leave) */}
+      {menuOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-3 backdrop-blur-xs"
+          onClick={() => setMenuOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm max-h-[90dvh] overflow-y-auto rounded-3xl border border-amber-300/35 bg-[#0c2d1c] p-5 shadow-2xl space-y-2.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-extrabold text-white">
+                  Controller Options
+                </h3>
+                <p className="text-xs text-emerald-200/75">
+                  Room {lobby.roomCode} • {viewerPlayer.name} ({myTeam.cumulativeScore} pts)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMenuOpen(false)}
+                className="rounded-xl bg-white/10 p-2 text-emerald-100 cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Card Size Picker */}
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+              <div className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-200">
+                Card Size in Hand
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(
+                  [
+                    { id: 'm', label: 'Medium' },
+                    { id: 'l', label: 'Large' },
+                    { id: 'xl', label: 'Jumbo' },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      setCardScale(opt.id);
+                      try {
+                        window.localStorage.setItem(SCALE_STORAGE_KEY, opt.id);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    className={`rounded-xl border py-2 text-xs font-extrabold cursor-pointer ${
+                      cardScale === opt.id
+                        ? 'border-amber-400 bg-amber-400/20 text-amber-200'
+                        : 'border-white/15 bg-black/30 text-emerald-100/80'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {fullscreen.isSupported ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void fullscreen.toggleFullscreen();
+                  setMenuOpen(false);
+                }}
+                className="flex w-full items-center gap-3 rounded-2xl border border-amber-300/35 bg-amber-400/15 px-4 py-3 text-sm font-bold text-amber-200 cursor-pointer"
+              >
+                {fullscreen.isFullscreen ? (
+                  <Minimize2 className="h-5 w-5" />
+                ) : (
+                  <Maximize2 className="h-5 w-5" />
+                )}
+                {fullscreen.isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'}
+              </button>
+            ) : (
+              <div className="rounded-2xl border border-white/10 bg-black/25 px-3.5 py-2.5 text-xs text-emerald-100/80">
+                <strong className="text-amber-200">iPhone Full Screen tip:</strong> Tap{' '}
+                <em>Share → Add to Home Screen</em> to launch full screen without Safari bars.
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                setRulesOpen(true);
+              }}
+              className="flex w-full items-center gap-3 rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-sm font-bold text-white cursor-pointer"
+            >
+              <BookOpen className="h-5 w-5 text-amber-300" />
+              Rules &amp; Live Scoreboard
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggleSound}
+              className="flex w-full items-center gap-3 rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-sm font-bold text-white cursor-pointer"
+            >
+              {soundMuted ? (
+                <VolumeX className="h-5 w-5 text-rose-300" />
+              ) : (
+                <Volume2 className="h-5 w-5 text-emerald-300" />
+              )}
+              {soundMuted ? 'Unmute Phone Sounds' : 'Mute Phone Sounds'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                onSwitchToFullTable();
+              }}
+              className="flex w-full items-center gap-3 rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-sm font-bold text-white cursor-pointer"
+            >
+              <Monitor className="h-5 w-5 text-sky-300" />
+              Switch to Full Desktop Table
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                onLeaveRoom();
+              }}
+              className="flex w-full items-center gap-3 rounded-2xl border border-rose-400/35 bg-rose-500/15 px-4 py-3 text-sm font-bold text-rose-200 cursor-pointer"
+            >
+              <LogOut className="h-5 w-5" />
+              Leave Room
+            </button>
+          </div>
+        </div>
+      )}
 
       <RulesScoringDrawer
         open={rulesOpen}

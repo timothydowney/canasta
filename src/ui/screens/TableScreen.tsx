@@ -5,6 +5,8 @@ import {
   EyeOff,
   Gauge,
   Home,
+  Maximize2,
+  Minimize2,
   Smartphone,
   Sparkles,
   Volume2,
@@ -46,6 +48,7 @@ import { PartnerPromptModal } from '../components/PartnerPromptModal';
 import { PrivacyCurtain } from '../components/PrivacyCurtain';
 import { RulesScoringDrawer } from '../components/RulesScoringDrawer';
 import { StockAndDiscard } from '../components/StockAndDiscard';
+import { useFullscreen } from '../hooks/useFullscreen';
 
 export interface TableScreenProps {
   state?: GameState | null;
@@ -92,6 +95,7 @@ export const TableScreen: React.FC<TableScreenProps> = ({
   const [takePileExtraMelds, setTakePileExtraMelds] = useState<MeldDraftItem[]>([]);
   const [rulesDrawerOpen, setRulesDrawerOpen] = useState(false);
   const [guardrail, setGuardrail] = useState<GuardrailPrompt | null>(null);
+  const fullscreen = useFullscreen();
 
   // Clear local UI selection/staging whenever turn, phase, or viewer changes
   useEffect(() => {
@@ -508,10 +512,32 @@ export const TableScreen: React.FC<TableScreenProps> = ({
             <button
               type="button"
               onClick={onSwitchToPhoneMode}
-              title="Switch to Compact Hand Controller Mode"
-              className="rounded-lg border border-white/15 bg-white/5 p-1.5 text-emerald-100 hover:bg-white/10 cursor-pointer"
+              title="Switch to Phone Controller Mode (Large Swipeable Hand)"
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl border-2 border-amber-300/70 bg-amber-400/20 px-3 text-xs font-extrabold text-amber-100 hover:bg-amber-400/30 cursor-pointer"
             >
-              <Smartphone className="h-3.5 w-3.5 text-amber-300" />
+              <Smartphone className="h-4 w-4 text-amber-300" />
+              <span>Phone View</span>
+            </button>
+          )}
+
+          {fullscreen.isSupported && (
+            <button
+              type="button"
+              onClick={() => void fullscreen.toggleFullscreen()}
+              title={fullscreen.isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-emerald-300/50 bg-emerald-500/20 px-3 text-xs font-extrabold text-emerald-100 hover:bg-emerald-500/30 cursor-pointer"
+            >
+              {fullscreen.isFullscreen ? (
+                <>
+                  <Minimize2 className="h-4 w-4 text-emerald-200" />
+                  <span>Exit</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="h-4 w-4 text-emerald-200" />
+                  <span>Full</span>
+                </>
+              )}
             </button>
           )}
 

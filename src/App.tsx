@@ -6,13 +6,18 @@ import { StartScreen } from './ui/screens/StartScreen';
 import { TableDisplayScreen } from './ui/screens/TableDisplayScreen';
 import { TableScreen } from './ui/screens/TableScreen';
 
+function detectPhoneViewport(): boolean {
+  if (typeof window === 'undefined') return false;
+  const shortSide = Math.min(window.innerWidth, window.innerHeight);
+  const isCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  return shortSide < 768 || (isCoarsePointer && shortSide < 900);
+}
+
 export const App: React.FC = () => {
   const local = useCanastaSession();
   const remote = useRemoteCanastaSession();
 
-  const [preferPhoneMode, setPreferPhoneMode] = useState<boolean>(
-    () => typeof window !== 'undefined' && window.innerWidth < 768,
-  );
+  const [preferPhoneMode, setPreferPhoneMode] = useState<boolean>(detectPhoneViewport);
 
   const initialJoinCode = useMemo(() => {
     if (typeof window === 'undefined') return null;

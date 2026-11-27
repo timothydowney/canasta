@@ -1,13 +1,17 @@
 import React from 'react';
 import { getCardAssetPath, getCardLabel, isWildCard, type Card } from '../../engine';
 
-export type CardSize = 'xs' | 'sm' | 'md' | 'lg';
+export type CardSize = 'xs' | 'sm' | 'md' | 'lg' | 'mobile-m' | 'mobile-l' | 'mobile-xl';
 
 const SIZE_CLASSES: Record<CardSize, string> = {
   xs: 'w-9 h-[50px]',
   sm: 'w-12 h-[67px] sm:w-14 sm:h-[78px]',
   md: 'w-[66px] h-[92px] sm:w-[76px] sm:h-[106px]',
   lg: 'w-[80px] h-[112px] sm:w-[92px] sm:h-[129px]',
+  // Generous mobile carousel sizes with exact 5:7 aspect ratio across portrait & short landscape viewports
+  'mobile-m': 'h-[min(154px,38dvh)] w-[calc(min(154px,38dvh)*5/7)]',
+  'mobile-l': 'h-[min(198px,43dvh)] w-[calc(min(198px,43dvh)*5/7)]',
+  'mobile-xl': 'h-[min(248px,48dvh)] w-[calc(min(248px,48dvh)*5/7)]',
 };
 
 export interface PlayingCardProps {
@@ -51,14 +55,17 @@ export const PlayingCard: React.FC<PlayingCardProps> = ({
   const label = faceDown || !card ? 'Face-down card' : getCardLabel(card);
   const interactive = Boolean(onClick);
   const isWild = !faceDown && card ? isWildCard(card) : false;
+  const isMobileLarge = size.startsWith('mobile-');
 
   const classes = [
-    'relative shrink-0 select-none rounded-md bg-white p-[1.5px] transition-all duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300',
+    'relative shrink-0 select-none rounded-lg bg-white p-[2px] transition-all duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300',
     SIZE_CLASSES[size],
     selected
-      ? '-translate-y-3.5 card-selected-shadow z-30'
+      ? isMobileLarge
+        ? '-translate-y-4 card-selected-shadow z-30'
+        : '-translate-y-3.5 card-selected-shadow z-30'
       : isNew
-        ? '-translate-y-1.5 card-new-shadow card-new-animate'
+        ? '-translate-y-2 card-new-shadow card-new-animate'
         : 'card-shadow',
     interactive && !dimmed && !selected
       ? 'cursor-pointer hover:-translate-y-2 hover:z-20'
@@ -78,19 +85,22 @@ export const PlayingCard: React.FC<PlayingCardProps> = ({
         src={src}
         alt={label}
         draggable={false}
-        className={`h-full w-full rounded-[4px] object-contain pointer-events-none ${
+        className={`h-full w-full rounded-[5px] object-contain pointer-events-none ${
           dimmed ? 'brightness-[0.78] saturate-[0.75]' : ''
         }`}
       />
       {showWildBadge && isWild && (
-        <span className="pointer-events-none absolute top-1 right-1 rounded bg-amber-400/95 px-1 py-[1px] text-[8px] font-black uppercase tracking-wider text-stone-950 shadow">
+        <span
+          className={`pointer-events-none absolute top-1.5 right-1.5 rounded bg-amber-400/95 font-black uppercase tracking-wider text-stone-950 shadow ${
+            isMobileLarge ? 'px-1.5 py-0.5 text-[10px]' : 'px-1 py-[1px] text-[8px]'
+          }`}
+        >
           Wild
         </span>
       )}
     </>
   );
 
-  // Render a <div> when non-interactive to avoid nested <button> inside meld/pile buttons
   if (!interactive) {
     return (
       <div aria-label={label} style={style} className={classes}>
