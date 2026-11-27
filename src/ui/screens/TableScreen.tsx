@@ -5,6 +5,7 @@ import {
   EyeOff,
   Gauge,
   Home,
+  Smartphone,
   Sparkles,
   Volume2,
   VolumeX,
@@ -47,11 +48,11 @@ import { RulesScoringDrawer } from '../components/RulesScoringDrawer';
 import { StockAndDiscard } from '../components/StockAndDiscard';
 
 export interface TableScreenProps {
-  state: GameState;
+  state?: GameState | null;
   view: PlayerView;
   mode: GameMode;
   botSpeed: BotSpeed;
-  onChangeBotSpeed: (speed: BotSpeed) => void;
+  onChangeBotSpeed?: (speed: BotSpeed) => void;
   soundMuted: boolean;
   onToggleSound: () => void;
   toast: ToastNotice | null;
@@ -61,6 +62,8 @@ export interface TableScreenProps {
   onRevealCurtain: () => void;
   onToggleManualHide: () => void;
   onDispatch: (action: GameAction) => boolean;
+  onSwitchToPhoneMode?: () => void;
+  roomCode?: string | null;
   onExitToMenu: () => void;
 }
 
@@ -79,6 +82,8 @@ export const TableScreen: React.FC<TableScreenProps> = ({
   onRevealCurtain,
   onToggleManualHide,
   onDispatch,
+  onSwitchToPhoneMode,
+  roomCode,
   onExitToMenu,
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -407,6 +412,7 @@ export const TableScreen: React.FC<TableScreenProps> = ({
   };
 
   const handleExportReplay = () => {
+    if (!state) return;
     const json = buildReplayExportJson(state);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -418,6 +424,7 @@ export const TableScreen: React.FC<TableScreenProps> = ({
   };
 
   const cycleBotSpeed = () => {
+    if (!onChangeBotSpeed) return;
     const order: BotSpeed[] = ['slow', 'normal', 'fast'];
     const next = order[(order.indexOf(botSpeed) + 1) % order.length];
     onChangeBotSpeed(next);
@@ -450,6 +457,11 @@ export const TableScreen: React.FC<TableScreenProps> = ({
           <span className="hidden md:inline-flex items-center gap-1 rounded-full border border-amber-300/30 bg-amber-400/10 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
             <Sparkles className="h-3 w-3" /> {view.ruleset.shortName} • Hand #{view.handNumber}
           </span>
+          {roomCode && (
+            <span className="rounded-full border border-emerald-300/35 bg-emerald-950/70 px-2 py-0.5 font-mono text-[10px] font-bold tracking-wider text-emerald-200">
+              ROOM {roomCode}
+            </span>
+          )}
         </div>
 
         {/* Live Match Score Pill (supports 2, 3, or 4 teams dynamically) */}
@@ -480,7 +492,7 @@ export const TableScreen: React.FC<TableScreenProps> = ({
 
         {/* Utility Buttons */}
         <div className="flex items-center gap-1.5">
-          {hasAnyBots && (
+          {hasAnyBots && onChangeBotSpeed && (
             <button
               type="button"
               onClick={cycleBotSpeed}
@@ -489,6 +501,17 @@ export const TableScreen: React.FC<TableScreenProps> = ({
             >
               <Gauge className="h-3.5 w-3.5 text-amber-300" />
               <span className="hidden sm:inline capitalize">{botSpeed}</span>
+            </button>
+          )}
+
+          {onSwitchToPhoneMode && (
+            <button
+              type="button"
+              onClick={onSwitchToPhoneMode}
+              title="Switch to Compact Hand Controller Mode"
+              className="rounded-lg border border-white/15 bg-white/5 p-1.5 text-emerald-100 hover:bg-white/10 cursor-pointer"
+            >
+              <Smartphone className="h-3.5 w-3.5 text-amber-300" />
             </button>
           )}
 
@@ -529,14 +552,16 @@ export const TableScreen: React.FC<TableScreenProps> = ({
             Rules &amp; Scoring
           </button>
 
-          <button
-            type="button"
-            onClick={handleExportReplay}
-            title="Export Hand Replay JSON"
-            className="rounded-lg border border-white/15 bg-white/5 p-1.5 text-emerald-100 hover:bg-white/10 cursor-pointer"
-          >
-            <Download className="h-3.5 w-3.5" />
-          </button>
+          {state && (
+            <button
+              type="button"
+              onClick={handleExportReplay}
+              title="Export Hand Replay JSON"
+              className="rounded-lg border border-white/15 bg-white/5 p-1.5 text-emerald-100 hover:bg-white/10 cursor-pointer"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
+          )}
 
           <button
             type="button"
