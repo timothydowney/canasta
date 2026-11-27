@@ -1,5 +1,6 @@
 import {
   getCardPoints,
+  getTeamById,
   isBlackThree,
   isNaturalRank,
   isWildCard,
@@ -13,6 +14,7 @@ import {
   type MeldSubmission,
   type NaturalRank,
   type PlayerView,
+  type TeamState,
 } from '../engine';
 import type { PlayerController } from './controller';
 import {
@@ -33,6 +35,15 @@ export class HeuristicBotController implements PlayerController {
   }
 
   chooseAction(view: PlayerView): GameAction {
+    // Partner Permission: answer immediately when asked by partner
+    if (view.legalHints.mustAnswerPartnerGoOut) {
+      return {
+        type: 'ANSWER_PARTNER_GO_OUT',
+        playerId: this.id,
+        allow: this.evaluatePartnerGoOutRequest(view),
+      };
+    }
+
     if (view.phase === 'DRAW') {
       return this.chooseDrawAction(view);
     }
@@ -51,28 +62,86 @@ export class HeuristicBotController implements PlayerController {
     return (r - 0.5) * 2 * magnitude;
   }
 
-  private getTeams(view: PlayerView) {
-    const myTeam = view.teams[view.viewerTeamId === 'team-0' ? 0 : 1];
-    const oppTeam = view.teams[view.viewerTeamId === 'team-0' ? 1 : 0];
-    return { myTeam, oppTeam };
+  private getTeams(view: PlayerView): {
+    myTeam: TeamState;
+    oppTeams: TeamState[];
+    nextOpponentTeam: TeamState | null;
+  } {
+    const myTeam = getTeamById(view.teams, view.viewerTeamId);
+    const oppTeams = view.teams.filter((t) => t.id !== view.viewerTeamId);
+    const me = view.players.find((p) => p.id === view.viewerId);
+    let nextOpponentTeam: TeamState | null = oppTeams[0] ?? null;
+    if (me) {
+      const nextSeat = (me.seatIndex + 1) % view.players.length;
+      const nextPlayer = view.players[nextSeat];
+      if (nextPlayer && nextPlayer.teamId !== view.viewerTeamId) {
+        nextOpponentTeam = getTeamById(view.teams, nextPlayer.teamId);
+      }
+    }
+    return { myTeam, oppTeams, nextOpponentTeam };
   }
 
   private getOppMinHandCount(view: PlayerView): number {
-    return Math.min(
-      ...view.players
-        .filter((p) => p.teamId !== view.viewerTeamId)
-        .map((p) => p.handCount),
-    );
+    const counts = view.players
+      .filter((p) => p.teamId !== view.viewerTeamId)
+      .map((p) => p.handCount);
+    return counts.length > 0 ? Math.min(...counts) : 99;
   }
 
-  /**
-   * Hard difficulty distinguishes patient early/mid-hand play (holding pairs to
-   * ambush frozen piles, conserving wilds) from endgame lock-down / go-out push.
-   */
+  private evaluatePartnerGoOutRequest(view: PlayerView): boolean {
+    const { myTeam } = this.getTeams(view);
+    const handPts = view.viewerHand.reduce((s, c) => s + getCardPoints(c), 0);
+    const oppMin = this.getOppMinHandCount(view);
+    const { byRank, wilds } = partitionHand(view.viewerHand);
+
+    // Always say Yes if opponents are close to going out, stock is nearly gone, or hand is light
+    if (handPts <= 70 || oppMin <= 4 || view.stockCount <= 12) {
+      return true;
+    }
+
+    // Check if our team already wins the match if partner goes out now
+    if (view.ruleset.winScore !== null) {
+      const currentTablePts =
+        myTeam.melds.reduce(
+          (s, m) => s + m.cards.reduce((cs, c) => cs + getCardPoints(c), 0),
+          0,
+        ) +
+        myTeam.melds.reduce(
+          (s, m) =>
+            s +
+            (m.canastaType === 'natural'
+              ? view.ruleset.naturalCanastaBonus
+              : m.canastaType === 'mixed'
+                ? view.ruleset.mixedCanastaBonus
+                : 0),
+          0,
+        );
+      if (
+        myTeam.cumulativeScore + currentTablePts + 100 - handPts >=
+        view.ruleset.winScore
+      ) {
+        return true;
+      }
+    }
+
+    // Say No if holding substantial playable melds/wilds and opponents aren't threatening
+    const hasPlayableMeld =
+      wilds.length >= 2 ||
+      [...byRank.values()].some((arr) => arr.length >= 3);
+    if (hasPlayableMeld && handPts > 85 && oppMin >= 6) {
+      return false;
+    }
+
+    return handPts <= 115;
+  }
+
   private isEndgame(view: PlayerView): boolean {
-    const { myTeam, oppTeam } = this.getTeams(view);
+    const { myTeam, oppTeams } = this.getTeams(view);
     const myCanastas = countExistingCanastas(myTeam.melds);
-    const oppCanastas = countExistingCanastas(oppTeam.melds);
+    const maxOppCanastas = Math.max(
+      0,
+      ...oppTeams.map((t) => countExistingCanastas(t.melds)),
+    );
     const oppMinCards = this.getOppMinHandCount(view);
     const req = view.ruleset.canastasRequiredToGoOut;
 
@@ -80,8 +149,8 @@ export class HeuristicBotController implements PlayerController {
       view.stockCount <= 18 ||
       oppMinCards <= 5 ||
       myCanastas >= req ||
-      (myCanastas >= req - 1 && view.viewerHand.length <= 10) ||
-      (oppCanastas >= req - 1 && oppMinCards <= 8)
+      (myCanastas >= req - 1 && view.viewerHand.length <= 9) ||
+      (maxOppCanastas >= req - 1 && oppMinCards <= 7)
     );
   }
 
@@ -89,8 +158,11 @@ export class HeuristicBotController implements PlayerController {
     const { myTeam } = this.getTeams(view);
     const topCard = view.discardPile.topCard;
 
-    // 1. Evaluate taking discard pile if legal
-    if (view.legalHints.canTakeDiscardPile && topCard && isNaturalRank(topCard.rank)) {
+    if (
+      view.legalHints.canTakeDiscardPile &&
+      topCard &&
+      isNaturalRank(topCard.rank)
+    ) {
       const takePlan = this.planTakeDiscardPile(view, topCard, myTeam.melds);
       if (takePlan) {
         if (view.legalHints.mustTakeDiscardPile) {
@@ -99,7 +171,6 @@ export class HeuristicBotController implements PlayerController {
         const oppMinCards = this.getOppMinHandCount(view);
         let utility = takePlan.utility + this.jitter(35);
 
-        // Penalize taking a tiny pile when opponent is close to going out
         if (oppMinCards <= 4 && view.discardPile.count <= 2) {
           utility -= 160;
         }
@@ -127,7 +198,6 @@ export class HeuristicBotController implements PlayerController {
       return { type: 'PASS_EXHAUSTED_STOCK', playerId: this.id };
     }
 
-    // Fallback for mandatory take
     if (topCard && isNaturalRank(topCard.rank)) {
       const existing = myTeam.melds.find((m) => m.rank === topCard.rank);
       if (existing) {
@@ -158,9 +228,8 @@ export class HeuristicBotController implements PlayerController {
     const { myTeam } = this.getTeams(view);
     const existingMeld = myMelds.find((m) => m.rank === topRank);
     const currentCanastas = countExistingCanastas(myMelds);
+    const goOutDenied = view.legalHints.partnerGoOutStatus === 'DENIED';
 
-    // In 2-player Canasta, drawing from stock yields 2 fresh cards.
-    // Normal & Hard account for that opportunity cost so they don't scoop a weak 1-card pile.
     const stockDrawCost =
       this.difficulty === 'easy'
         ? 0
@@ -171,7 +240,7 @@ export class HeuristicBotController implements PlayerController {
     const { byRank, wilds } = partitionHand(hand);
     const matchingNaturals = byRank.get(topRank) ?? [];
 
-    // Case A: Initial meld not made yet -> must use natural pair + optional extra melds
+    // Case A: Initial meld not made yet
     if (!myTeam.hasMadeInitialMeld) {
       const plan = findBestInitialMeld(
         hand,
@@ -183,6 +252,8 @@ export class HeuristicBotController implements PlayerController {
         },
       );
       if (!plan) return null;
+      const postHand = hand.length - plan.cardsUsedCount + buriedCount;
+      if (postHand <= 1 && goOutDenied) return null;
 
       const topMeld = plan.melds[0];
       const extraMelds = plan.melds.slice(1);
@@ -206,17 +277,18 @@ export class HeuristicBotController implements PlayerController {
       };
     }
 
-    // Case B: Initial meld already made, unfrozen, matches existing meld
+    // Case B: Initial meld made, unfrozen, matches existing meld
     if (!frozen && existingMeld) {
       const postHand = hand.length + buriedCount;
       const completesCanasta =
         !existingMeld.isCanasta && existingMeld.cards.length + 1 >= 7;
       const postCanastas = currentCanastas + (completesCanasta ? 1 : 0);
-      if (postHand <= 1 && postCanastas < view.ruleset.canastasRequiredToGoOut) {
+      if (
+        postHand <= 1 &&
+        (goOutDenied || postCanastas < view.ruleset.canastasRequiredToGoOut)
+      ) {
         return null;
       }
-      // On Normal/Hard, a 1-card pile gives 0 net cards to hand (only +1 to meld),
-      // so skip unless it completes a Canasta, helps go out, or stock is empty!
       const helpsCloseNatural =
         !existingMeld.isCanasta &&
         existingMeld.wildCount === 0 &&
@@ -239,7 +311,7 @@ export class HeuristicBotController implements PlayerController {
       };
     }
 
-    // Case C: Natural pair in hand (works for both frozen and unfrozen)
+    // Case C: Natural pair in hand
     if (matchingNaturals.length >= 2) {
       const pairIds = [matchingNaturals[0].id, matchingNaturals[1].id];
       const postHand = hand.length - 2 + buriedCount;
@@ -247,7 +319,10 @@ export class HeuristicBotController implements PlayerController {
         ? !existingMeld.isCanasta && existingMeld.cards.length + 3 >= 7
         : false;
       const postCanastas = currentCanastas + (completesCanasta ? 1 : 0);
-      if (postHand <= 1 && postCanastas < view.ruleset.canastasRequiredToGoOut) {
+      if (
+        postHand <= 1 &&
+        (goOutDenied || postCanastas < view.ruleset.canastasRequiredToGoOut)
+      ) {
         return null;
       }
       const utility =
@@ -266,10 +341,18 @@ export class HeuristicBotController implements PlayerController {
       };
     }
 
-    // Case D: Unfrozen, no existing meld, 1 matching natural + 1 wild
-    if (!frozen && !existingMeld && matchingNaturals.length >= 1 && wilds.length >= 1) {
+    // Case D: Unfrozen, no existing meld, 1 natural + 1 wild
+    if (
+      !frozen &&
+      !existingMeld &&
+      matchingNaturals.length >= 1 &&
+      wilds.length >= 1
+    ) {
       const postHand = hand.length - 2 + buriedCount;
-      if (postHand <= 1 && currentCanastas < view.ruleset.canastasRequiredToGoOut) {
+      if (
+        postHand <= 1 &&
+        (goOutDenied || currentCanastas < view.ruleset.canastasRequiredToGoOut)
+      ) {
         return null;
       }
       const wildCard = wilds[0];
@@ -303,12 +386,29 @@ export class HeuristicBotController implements PlayerController {
   private chooseMeldAction(view: PlayerView): GameAction | null {
     const { myTeam } = this.getTeams(view);
     const hand = view.viewerHand;
-    if (hand.length <= 1) return null;
+    if (hand.length <= 1) {
+      // If down to 1 card and partnered with a human, ask partner before discarding out!
+      if (
+        hand.length === 1 &&
+        view.legalHints.canAskPartnerGoOut &&
+        view.legalHints.viewerCanastas >= view.legalHints.canastasRequired
+      ) {
+        const partner = view.players.find(
+          (p) => p.teamId === view.viewerTeamId && p.id !== view.viewerId,
+        );
+        if (partner?.kind === 'human') {
+          return { type: 'ASK_PARTNER_GO_OUT', playerId: this.id };
+        }
+      }
+      return null;
+    }
 
     const isHard = this.difficulty === 'hard';
     const endgame = this.isEndgame(view);
+    const goOutDenied = view.legalHints.partnerGoOutStatus === 'DENIED';
+    const goOutApproved = view.legalHints.partnerGoOutStatus === 'APPROVED';
 
-    // 1. Before initial meld: run exact solver
+    // 1. Before initial meld
     if (!myTeam.hasMadeInitialMeld) {
       const plan = findBestInitialMeld(
         hand,
@@ -317,11 +417,13 @@ export class HeuristicBotController implements PlayerController {
       );
       if (!plan) return null;
 
-      // Hard bot exercises patience: if stock is deep and opponent isn't threatening,
-      // don't burn 2+ wild cards on a bare minimum initial meld (wait for naturals).
+      const postHand = hand.length - plan.cardsUsedCount;
+      if (postHand <= 1 && goOutDenied) return null;
+
       if (
         isHard &&
         !endgame &&
+        !goOutApproved &&
         view.stockCount > 28 &&
         plan.canastasFormed === 0 &&
         plan.wildsUsed >= 2 &&
@@ -337,7 +439,7 @@ export class HeuristicBotController implements PlayerController {
       };
     }
 
-    // 2. After initial meld: build melds & additions according to difficulty strategy
+    // 2. After initial meld
     const { byRank, wilds, blackThrees } = partitionHand(hand);
     const availableWilds = wilds.slice();
     const submissions: MeldSubmission[] = [];
@@ -361,16 +463,15 @@ export class HeuristicBotController implements PlayerController {
       });
     }
 
-    // Step 2a: Add natural cards to existing melds
+    // Step 2a: Add naturals to existing melds
     for (const [rank, natCards] of byRank.entries()) {
       const existing = existingByRank.get(rank);
       if (!existing || natCards.length === 0) continue;
 
-      // Hard patience: if this meld is ALREADY a completed Canasta and we hold a pair
-      // early/mid-game, keep the pair in hand so we can still ambush a frozen discard pile!
       if (
         isHard &&
         !endgame &&
+        !goOutApproved &&
         existing.isCanasta &&
         natCards.length >= 2 &&
         hand.length <= 15
@@ -395,19 +496,17 @@ export class HeuristicBotController implements PlayerController {
       }
     }
 
-    // Step 2b: Create new natural melds (3+ naturals of a rank not yet melded)
+    // Step 2b: New natural melds (3+ naturals)
     const createdRanks = new Set<NaturalRank>();
     for (const [rank, natCards] of byRank.entries()) {
       if (existingByRank.has(rank)) continue;
       if (natCards.length < view.ruleset.minMeldSize) continue;
       if (!validateMeldCards(natCards, rank, view.ruleset).valid) continue;
 
-      // Hard patience: early/mid-hand, hold thin 3-card sets (4-Q) in hand to keep
-      // discard flexibility and ambush frozen discard piles; do lay down 4+ naturals
-      // (strong Natural Canasta candidates) or whenever hand grows large (> 14 cards).
       if (
         isHard &&
         !endgame &&
+        !goOutApproved &&
         natCards.length === 3 &&
         hand.length - usedIds.size <= 14 &&
         getCardPoints(natCards[0]) <= 10
@@ -425,7 +524,7 @@ export class HeuristicBotController implements PlayerController {
       if (natCards.length >= 7) projectedCanastas++;
     }
 
-    // Step 2c: Use wild cards strategically to complete Mixed Canastas
+    // Step 2c: Strategic wild cards for Mixed Canastas
     if (availableWilds.length > 0) {
       const candidates = myTeam.melds
         .filter((m) => m.rank !== '3B' && !m.isCanasta)
@@ -440,10 +539,10 @@ export class HeuristicBotController implements PlayerController {
         const wildRoom = view.ruleset.maxWildsPerMeld - sim.wilds;
         if (wildRoom < needed || availableWilds.length < needed) continue;
 
-        // Protect pure-natural Canasta candidates (5–6 naturals) while stock is healthy
         if (
           (this.difficulty === 'normal' || isHard) &&
           !endgame &&
+          !goOutApproved &&
           sim.wilds === 0 &&
           sim.cards.length >= 5 &&
           availableWilds.length < 3 &&
@@ -451,8 +550,7 @@ export class HeuristicBotController implements PlayerController {
         ) {
           continue;
         }
-        // Hard bot avoids burning 2+ wilds on a 5-card meld early when not in endgame
-        if (isHard && !endgame && needed >= 2 && view.stockCount > 24) {
+        if (isHard && !endgame && !goOutApproved && needed >= 2 && view.stockCount > 24) {
           continue;
         }
 
@@ -476,15 +574,13 @@ export class HeuristicBotController implements PlayerController {
         projectedCanastas++;
       }
 
-      // Opening a 3-card meld with a wild (pair + 1 wild):
-      // Easy does it whenever >= 2 wilds; Normal only if >= 3 wilds or endgame;
-      // Hard NEVER burns a wild to open a thin 3-card meld unless in endgame with spare wilds!
       const allowWildOpen =
-        this.difficulty === 'easy'
+        goOutApproved ||
+        (this.difficulty === 'easy'
           ? availableWilds.length >= 2
           : this.difficulty === 'normal'
             ? availableWilds.length >= 3 || (endgame && availableWilds.length >= 2)
-            : endgame && availableWilds.length >= 2 && hand.length - usedIds.size >= 8;
+            : endgame && availableWilds.length >= 2 && hand.length - usedIds.size >= 8);
 
       if (allowWildOpen) {
         const highPairs = [...byRank.entries()]
@@ -493,12 +589,12 @@ export class HeuristicBotController implements PlayerController {
               !existingByRank.has(r) &&
               !createdRanks.has(r) &&
               cards.length === 2 &&
-              getCardPoints(cards[0]) >= 10,
+              (goOutApproved || getCardPoints(cards[0]) >= 10),
           )
           .sort((a, b) => getCardPoints(b[1][0]) - getCardPoints(a[1][0]));
 
-        if (highPairs.length > 0) {
-          const [rank, pair] = highPairs[0];
+        for (const [rank, pair] of highPairs) {
+          if (availableWilds.length === 0) break;
           const w = availableWilds.shift()!;
           submissions.push({
             kind: 'new_meld',
@@ -509,13 +605,17 @@ export class HeuristicBotController implements PlayerController {
           usedIds.add(pair[0].id);
           usedIds.add(pair[1].id);
           usedIds.add(w.id);
+          if (!goOutApproved) break;
         }
       }
     }
 
-    // Step 2d: Check if shedding remaining wilds or Black 3s lets us GO OUT right now
+    // Step 2d: Go-out shedding (Black 3s & leftover wilds) when allowed
     const remainingNow = hand.filter((c) => !usedIds.has(c.id));
-    if (projectedCanastas >= view.ruleset.canastasRequiredToGoOut) {
+    if (
+      !goOutDenied &&
+      projectedCanastas >= view.ruleset.canastasRequiredToGoOut
+    ) {
       const leftoverWilds = remainingNow.filter(isWildCard);
       const leftoverNonWilds = remainingNow.filter((c) => !isWildCard(c));
       const canMeldBlack3s =
@@ -559,12 +659,12 @@ export class HeuristicBotController implements PlayerController {
 
     if (submissions.length === 0) return null;
 
-    // Step 2e: Safety trim — NEVER violate the one-card deadlock rule!
+    // Step 2e: Safety trim — respect one-card deadlock AND Partner Permission DENIED!
     let remainingCount = hand.length - usedIds.size;
-    if (
-      remainingCount <= 1 &&
-      projectedCanastas < view.ruleset.canastasRequiredToGoOut
-    ) {
+    const mustKeepTwo =
+      goOutDenied || projectedCanastas < view.ruleset.canastasRequiredToGoOut;
+
+    if (remainingCount <= 1 && mustKeepTwo) {
       while (submissions.length > 0 && remainingCount <= 1) {
         const last = submissions[submissions.length - 1];
         if (last.kind === 'add_to_meld' && last.cardIds.length > 1) {
@@ -580,6 +680,20 @@ export class HeuristicBotController implements PlayerController {
       if (submissions.length === 0) return null;
     }
 
+    // Step 2f: If this meld plan will go out AND we're partnered with a human, ask first!
+    if (
+      remainingCount <= 1 &&
+      !mustKeepTwo &&
+      view.legalHints.canAskPartnerGoOut
+    ) {
+      const partner = view.players.find(
+        (p) => p.teamId === view.viewerTeamId && p.id !== view.viewerId,
+      );
+      if (partner?.kind === 'human') {
+        return { type: 'ASK_PARTNER_GO_OUT', playerId: this.id };
+      }
+    }
+
     return {
       type: 'COMMIT_MELDS',
       playerId: this.id,
@@ -593,12 +707,25 @@ export class HeuristicBotController implements PlayerController {
       return { type: 'GO_OUT_WITHOUT_DISCARD', playerId: this.id };
     }
 
-    const { myTeam, oppTeam } = this.getTeams(view);
+    const { myTeam, oppTeams, nextOpponentTeam } = this.getTeams(view);
     const { byRank } = partitionHand(hand);
-    const oppMeldRanks = new Set(oppTeam.melds.map((m) => m.rank));
+
+    const nextOppMeldRanks = new Set(
+      (nextOpponentTeam?.melds ?? []).map((m) => m.rank),
+    );
+    const otherOppMeldRanks = new Set(
+      oppTeams
+        .filter((t) => t.id !== nextOpponentTeam?.id)
+        .flatMap((t) => t.melds.map((m) => m.rank)),
+    );
     const myMeldRanks = new Set(myTeam.melds.map((m) => m.rank));
-    const pileUnfrozenForOpp =
-      !view.discardPile.frozenByWildOrInitial && oppTeam.hasMadeInitialMeld;
+
+    const pileUnfrozenForNextOpp =
+      !view.discardPile.frozenByWildOrInitial &&
+      (nextOpponentTeam?.hasMadeInitialMeld ?? false);
+    const anyOppUnfrozen =
+      !view.discardPile.frozenByWildOrInitial &&
+      oppTeams.some((t) => t.hasMadeInitialMeld);
     const pileCount = view.discardPile.count;
     const isHard = this.difficulty === 'hard';
 
@@ -610,23 +737,20 @@ export class HeuristicBotController implements PlayerController {
 
       if (isWildCard(card)) {
         keepScore = card.rank === 'JOKER' ? 195 : 145;
-        // Emergency freeze with a 2 if unfrozen pile is large and dangerous
         const freezeThreshold = isHard ? 7 : 10;
         if (
           this.difficulty !== 'easy' &&
           card.rank === '2' &&
-          pileUnfrozenForOpp &&
+          anyOppUnfrozen &&
           pileCount >= freezeThreshold
         ) {
           keepScore -= isHard ? 115 : 85;
         }
       } else if (isBlackThree(card)) {
-        // Use Black 3 tactically to stop opponent from taking a valuable pile
         const stopThreshold = isHard ? 4 : 5;
-        if (pileUnfrozenForOpp && pileCount >= stopThreshold) {
+        if (pileUnfrozenForNextOpp && pileCount >= stopThreshold) {
           keepScore = -45;
         } else if (isHard && pileCount === 0) {
-          // Save Black 3s when pile is empty so they're available to block later
           keepScore = 38;
         } else {
           keepScore = 15;
@@ -635,20 +759,24 @@ export class HeuristicBotController implements PlayerController {
         const countInHand = (byRank.get(card.rank) ?? []).length;
         keepScore = getCardPoints(card) * (isHard ? 1.5 : 1.2);
 
-        // Protect pairs and sets (Hard guards pairs even more carefully for frozen pickups)
         if (countInHand === 2) keepScore += isHard ? 72 : 55;
         else if (countInHand >= 3) keepScore += isHard ? 115 : 95;
 
-        // Protect cards matching our own melds
         if (myMeldRanks.has(card.rank)) keepScore += 75;
 
-        // Strongly avoid feeding opponent's melds when pile is unfrozen
-        if (oppMeldRanks.has(card.rank)) {
-          keepScore += pileUnfrozenForOpp ? (isHard ? 130 : 95) : 25;
+        // Clockwise threat: feeding the immediate next opponent is most dangerous
+        if (nextOppMeldRanks.has(card.rank)) {
+          keepScore += pileUnfrozenForNextOpp ? (isHard ? 140 : 105) : 28;
+        } else if (otherOppMeldRanks.has(card.rank)) {
+          keepScore += anyOppUnfrozen ? (isHard ? 80 : 55) : 15;
         }
 
-        // Before opponent's initial meld, high cards (A/K/Q) help them reach 50/90/120 more than 4-7s
-        if (isHard && !oppTeam.hasMadeInitialMeld && getCardPoints(card) >= 10) {
+        if (
+          isHard &&
+          nextOpponentTeam &&
+          !nextOpponentTeam.hasMadeInitialMeld &&
+          getCardPoints(card) >= 10
+        ) {
           keepScore += 18;
         }
       }

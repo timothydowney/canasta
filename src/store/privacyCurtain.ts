@@ -1,20 +1,16 @@
 import type { ActionLogEntry } from '../engine';
 
 /**
- * Extracts safe public move summaries from the previous turn so the incoming
- * Pass-and-Play player knows what happened without seeing hidden cards.
+ * Extracts safe public move summaries from recent turns (including any
+ * intervening bot turns in 3P/4P Pass-and-Play) so the incoming human player
+ * knows what happened without seeing hidden cards.
  */
 export function buildTurnRecap(
   actionLog: readonly ActionLogEntry[],
-  previousTurnNumber: number,
-  previousPlayerId: string,
+  afterLogId: number,
 ): string[] {
   return actionLog
-    .filter(
-      (entry) =>
-        entry.turnNumber === previousTurnNumber &&
-        entry.playerId === previousPlayerId &&
-        entry.kind !== 'undo',
-    )
+    .filter((entry) => entry.id > afterLogId && entry.kind !== 'undo')
+    .slice(-8)
     .map((entry) => entry.message);
 }

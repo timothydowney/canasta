@@ -1,12 +1,12 @@
 import React from 'react';
 import { Download, Trophy, Play, Home } from 'lucide-react';
-import type { HandSummary, TeamState } from '../../engine';
+import type { HandSummary, TeamId, TeamState } from '../../engine';
 
 export interface HandSummaryModalProps {
   summary: HandSummary | null;
-  teams: [TeamState, TeamState];
+  teams: TeamState[];
   isMatchOver: boolean;
-  winnerTeamId: 'team-0' | 'team-1' | null;
+  winnerTeamId: TeamId | null;
   winScore: number | null;
   onNextHand: () => void;
   onExitToMenu: () => void;
@@ -26,11 +26,9 @@ export const HandSummaryModal: React.FC<HandSummaryModalProps> = ({
   if (!summary) return null;
 
   const winnerName =
-    winnerTeamId === 'team-0'
-      ? teams[0].name
-      : winnerTeamId === 'team-1'
-        ? teams[1].name
-        : 'Tie Game';
+    winnerTeamId
+      ? teams.find((t) => t.id === winnerTeamId)?.name ?? 'Winner'
+      : 'Tie Game';
 
   const reasonLabel =
     summary.reason === 'WENT_OUT_CONCEALED'
@@ -41,34 +39,48 @@ export const HandSummaryModal: React.FC<HandSummaryModalProps> = ({
           ? 'Last Stock Card Was a Red 3'
           : 'Stock Exhausted';
 
-  const [b0, b1] = summary.breakdowns;
-  const rows: Array<{ label: string; v0: number; v1: number; highlight?: boolean }> = [
-    { label: 'Melded Card Points', v0: b0.meldedCardPoints, v1: b1.meldedCardPoints },
+  const breakdowns = summary.breakdowns;
+  const rows: Array<{
+    label: string;
+    values: number[];
+    highlight?: boolean;
+  }> = [
     {
-      label: `Natural Canastas (${b0.naturalCanastaCount} / ${b1.naturalCanastaCount})`,
-      v0: b0.naturalCanastaPoints,
-      v1: b1.naturalCanastaPoints,
+      label: 'Melded Card Points',
+      values: breakdowns.map((b) => b.meldedCardPoints),
     },
     {
-      label: `Mixed Canastas (${b0.mixedCanastaCount} / ${b1.mixedCanastaCount})`,
-      v0: b0.mixedCanastaPoints,
-      v1: b1.mixedCanastaPoints,
+      label: 'Natural Canastas (+500)',
+      values: breakdowns.map((b) => b.naturalCanastaPoints),
     },
     {
-      label: `Red 3s (${b0.redThreeCount} / ${b1.redThreeCount})`,
-      v0: b0.redThreePoints,
-      v1: b1.redThreePoints,
+      label: 'Mixed Canastas (+300)',
+      values: breakdowns.map((b) => b.mixedCanastaPoints),
     },
-    { label: 'Going Out Bonus', v0: b0.goingOutBonus, v1: b1.goingOutBonus },
-    { label: 'Unmelded Cards in Hand', v0: b0.unmeldedHandPenalty, v1: b1.unmeldedHandPenalty },
-    { label: 'Hand Net Score', v0: b0.handNetScore, v1: b1.handNetScore, highlight: true },
+    {
+      label: 'Red 3s',
+      values: breakdowns.map((b) => b.redThreePoints),
+    },
+    {
+      label: 'Going Out Bonus',
+      values: breakdowns.map((b) => b.goingOutBonus),
+    },
+    {
+      label: 'Unmelded Cards in Hand',
+      values: breakdowns.map((b) => b.unmeldedHandPenalty),
+    },
+    {
+      label: 'Hand Net Score',
+      values: breakdowns.map((b) => b.handNetScore),
+      highlight: true,
+    },
   ];
 
   const fmt = (n: number) => (n > 0 ? `+${n.toLocaleString()}` : n.toLocaleString());
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs">
-      <div className="w-full max-w-xl rounded-3xl border border-amber-300/40 bg-[#0d311f] p-6 shadow-2xl">
+      <div className="w-full max-w-2xl rounded-3xl border border-amber-300/40 bg-[#0d311f] p-6 shadow-2xl">
         <div className="text-center">
           {isMatchOver && (
             <div className="mx-auto mb-2 inline-flex items-center gap-2 rounded-full bg-amber-400/20 border border-amber-300/50 px-3.5 py-1 text-xs font-extrabold uppercase tracking-wider text-amber-300">
@@ -81,48 +93,54 @@ export const HandSummaryModal: React.FC<HandSummaryModalProps> = ({
           <p className="mt-1 text-sm text-emerald-200/80">{reasonLabel}</p>
         </div>
 
-        <div className="mt-5 overflow-hidden rounded-2xl border border-emerald-200/15 bg-black/25">
+        <div className="mt-5 overflow-x-auto rounded-2xl border border-emerald-200/15 bg-black/25">
           <table className="w-full text-sm">
             <thead className="bg-black/40 text-xs uppercase tracking-wider text-emerald-200/80">
               <tr>
                 <th className="px-4 py-2.5 text-left">Category</th>
-                <th className="px-4 py-2.5 text-right">{teams[0].name}</th>
-                <th className="px-4 py-2.5 text-right">{teams[1].name}</th>
+                {teams.map((t) => (
+                  <th key={t.id} className="px-3 py-2.5 text-right">
+                    {t.name}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
               {rows.map((r) => (
                 <tr
                   key={r.label}
-                  className={r.highlight ? 'bg-amber-400/10 font-bold text-white' : 'text-emerald-100/90'}
+                  className={
+                    r.highlight
+                      ? 'bg-amber-400/10 font-bold text-white'
+                      : 'text-emerald-100/90'
+                  }
                 >
                   <td className="px-4 py-2">{r.label}</td>
-                  <td
-                    className={`px-4 py-2 text-right ${
-                      r.v0 < 0 ? 'text-rose-300' : r.v0 > 0 && r.highlight ? 'text-emerald-300' : ''
-                    }`}
-                  >
-                    {fmt(r.v0)}
-                  </td>
-                  <td
-                    className={`px-4 py-2 text-right ${
-                      r.v1 < 0 ? 'text-rose-300' : r.v1 > 0 && r.highlight ? 'text-emerald-300' : ''
-                    }`}
-                  >
-                    {fmt(r.v1)}
-                  </td>
+                  {r.values.map((v, i) => (
+                    <td
+                      key={i}
+                      className={`px-3 py-2 text-right ${
+                        v < 0
+                          ? 'text-rose-300'
+                          : v > 0 && r.highlight
+                            ? 'text-emerald-300'
+                            : ''
+                      }`}
+                    >
+                      {fmt(v)}
+                    </td>
+                  ))}
                 </tr>
               ))}
               <tr className="bg-black/45 font-extrabold text-base text-amber-200">
                 <td className="px-4 py-3">
                   Match Total {winScore ? `(Target ${winScore.toLocaleString()})` : ''}
                 </td>
-                <td className="px-4 py-3 text-right">
-                  {b0.cumulativeAfterHand.toLocaleString()}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  {b1.cumulativeAfterHand.toLocaleString()}
-                </td>
+                {breakdowns.map((b) => (
+                  <td key={b.teamId} className="px-3 py-3 text-right">
+                    {b.cumulativeAfterHand.toLocaleString()}
+                  </td>
+                ))}
               </tr>
             </tbody>
           </table>

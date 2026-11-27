@@ -1,6 +1,6 @@
 import type { GameState } from '../engine';
 
-export type GameMode = 'solo_bot' | 'pass_and_play';
+export type GameMode = 'solo_bots' | 'pass_and_play';
 export type BotSpeed = 'slow' | 'normal' | 'fast';
 
 export const BOT_SPEED_MS: Record<BotSpeed, number> = {
@@ -10,14 +10,14 @@ export const BOT_SPEED_MS: Record<BotSpeed, number> = {
 };
 
 export interface SavedSession {
-  schemaVersion: 1;
+  schemaVersion: 2;
   savedAt: string;
   mode: GameMode;
   botSpeed: BotSpeed;
   state: GameState;
 }
 
-const STORAGE_KEY = 'canasta_saved_match_v1';
+const STORAGE_KEY = 'canasta_saved_match_v2';
 
 export function saveSession(session: SavedSession): void {
   try {
@@ -35,9 +35,9 @@ export function loadSavedSession(): SavedSession | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SavedSession>;
     if (
-      parsed.schemaVersion !== 1 ||
+      parsed.schemaVersion !== 2 ||
       !parsed.state ||
-      parsed.state.schemaVersion !== 1 ||
+      parsed.state.schemaVersion !== 2 ||
       !Array.isArray(parsed.state.players) ||
       !Array.isArray(parsed.state.teams)
     ) {
@@ -73,12 +73,11 @@ export function buildReplayExportJson(state: GameState): string {
       kind: p.kind,
       botDifficulty: p.botDifficulty,
     })),
-    teamScoresAtHandStart: [
-      state.teams[0].cumulativeScore -
-        (state.lastHandSummary?.breakdowns[0].handNetScore ?? 0),
-      state.teams[1].cumulativeScore -
-        (state.lastHandSummary?.breakdowns[1].handNetScore ?? 0),
-    ],
+    teamScoresAtHandStart: state.teams.map(
+      (t, idx) =>
+        t.cumulativeScore -
+        (state.lastHandSummary?.breakdowns[idx]?.handNetScore ?? 0),
+    ),
     actionHistory: state.actionHistory,
   };
   return JSON.stringify(payload, null, 2);

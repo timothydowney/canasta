@@ -14,6 +14,7 @@ import { soundEngine } from '../audio/soundEngine';
 import {
   getCardLabel,
   getCardPoints,
+  getTeamById,
   inferMeldRank,
   isBlackThree,
   isWildCard,
@@ -39,7 +40,8 @@ import { CardHand } from '../components/CardHand';
 import { GuardrailModal, type GuardrailPrompt } from '../components/GuardrailModal';
 import { HandSummaryModal } from '../components/HandSummaryModal';
 import { MeldZone } from '../components/MeldZone';
-import { PlayingCard } from '../components/PlayingCard';
+import { OpponentStrip } from '../components/OpponentStrip';
+import { PartnerPromptModal } from '../components/PartnerPromptModal';
 import { PrivacyCurtain } from '../components/PrivacyCurtain';
 import { RulesScoringDrawer } from '../components/RulesScoringDrawer';
 import { StockAndDiscard } from '../components/StockAndDiscard';
@@ -55,6 +57,7 @@ export interface TableScreenProps {
   toast: ToastNotice | null;
   onDismissToast: () => void;
   curtain: PrivacyCurtainState;
+  hideHandForBotInterlude: boolean;
   onRevealCurtain: () => void;
   onToggleManualHide: () => void;
   onDispatch: (action: GameAction) => boolean;
@@ -72,6 +75,7 @@ export const TableScreen: React.FC<TableScreenProps> = ({
   toast,
   onDismissToast,
   curtain,
+  hideHandForBotInterlude,
   onRevealCurtain,
   onToggleManualHide,
   onDispatch,
@@ -97,10 +101,10 @@ export const TableScreen: React.FC<TableScreenProps> = ({
     [view.viewerHand],
   );
 
-  const myTeam = view.teams[view.viewerTeamId === 'team-0' ? 0 : 1];
-  const oppTeam = view.teams[view.viewerTeamId === 'team-0' ? 1 : 0];
-  const oppPlayer = view.players.find((p) => p.teamId !== view.viewerTeamId)!;
+  const myTeam = getTeamById(view.teams, view.viewerTeamId);
   const viewerPlayer = view.players.find((p) => p.id === view.viewerId)!;
+  const isPartnership =
+    view.ruleset.teamCount === 2 && view.ruleset.playerCount === 4;
 
   const stagedCardIds = useMemo(() => {
     const ids = new Set<string>();
@@ -427,9 +431,13 @@ export const TableScreen: React.FC<TableScreenProps> = ({
     [view.newlyAcquiredCardIds],
   );
 
-  // Hide hand contents completely while Pass-and-Play privacy curtain is mounted
-  const handHidden = curtain.open;
-  const oppBackCount = Math.min(oppPlayer.handCount, 12);
+  // Hide hand contents completely while Pass-and-Play privacy curtain or bot interlude is active
+  const handHidden = curtain.open || hideHandForBotInterlude;
+  const hasAnyBots = view.players.some((p) => p.kind === 'bot');
+  const partnerAskerName = view.partnerGoOut
+    ? view.players.find((p) => p.id === view.partnerGoOut!.askedByPlayerId)?.name ??
+      'Partner'
+    : 'Partner';
 
   return (
     <div className="flex h-dvh w-full flex-col casino-felt overflow-hidden">
@@ -440,25 +448,29 @@ export const TableScreen: React.FC<TableScreenProps> = ({
             CANASTA
           </span>
           <span className="hidden md:inline-flex items-center gap-1 rounded-full border border-amber-300/30 bg-amber-400/10 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
-            <Sparkles className="h-3 w-3" /> {view.ruleset.name} • Hand #{view.handNumber}
+            <Sparkles className="h-3 w-3" /> {view.ruleset.shortName} • Hand #{view.handNumber}
           </span>
         </div>
 
-        {/* Live Match Score Pill */}
-        <div className="flex items-center gap-2 rounded-full border border-amber-300/25 bg-black/45 px-3 py-1 text-xs">
-          <span className="font-semibold text-emerald-200">
-            {myTeam.name}:{' '}
-            <strong className="text-white">
-              {myTeam.cumulativeScore.toLocaleString()}
-            </strong>
-          </span>
-          <span className="text-emerald-500/70">|</span>
-          <span className="font-semibold text-emerald-200">
-            {oppTeam.name}:{' '}
-            <strong className="text-white">
-              {oppTeam.cumulativeScore.toLocaleString()}
-            </strong>
-          </span>
+        {/* Live Match Score Pill (supports 2, 3, or 4 teams dynamically) */}
+        <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-amber-300/25 bg-black/45 px-3 py-1 text-xs">
+          {view.teams.map((t, idx) => (
+            <React.Fragment key={t.id}>
+              {idx > 0 && <span className="text-emerald-500/70">|</span>}
+              <span
+                className={
+                  t.id === view.viewerTeamId
+                    ? 'font-semibold text-amber-200'
+                    : 'font-semibold text-emerald-200'
+                }
+              >
+                {t.name.length > 14 ? `${t.name.slice(0, 12)}…` : t.name}:{' '}
+                <strong className="text-white">
+                  {t.cumulativeScore.toLocaleString()}
+                </strong>
+              </span>
+            </React.Fragment>
+          ))}
           {view.ruleset.winScore && (
             <span className="hidden sm:inline text-[10px] text-amber-200/70">
               / {view.ruleset.winScore.toLocaleString()}
@@ -468,7 +480,7 @@ export const TableScreen: React.FC<TableScreenProps> = ({
 
         {/* Utility Buttons */}
         <div className="flex items-center gap-1.5">
-          {mode === 'solo_bot' && (
+          {hasAnyBots && (
             <button
               type="button"
               onClick={cycleBotSpeed}
@@ -541,7 +553,7 @@ export const TableScreen: React.FC<TableScreenProps> = ({
       {toast && (
         <div
           key={toast.id}
-          className="toast-float-in pointer-events-none fixed bottom-36 sm:bottom-44 left-1/2 z-40 w-max max-w-[92vw] px-2"
+          className="toast-float-in pointer-events-none fixed bottom-48 sm:bottom-56 left-1/2 z-40 w-max max-w-[92vw] px-2"
         >
           <div
             className={`pointer-events-auto flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 text-xs sm:text-sm font-bold shadow-[0_12px_32px_rgba(0,0,0,0.6)] backdrop-blur-md ${
@@ -567,46 +579,8 @@ export const TableScreen: React.FC<TableScreenProps> = ({
 
       {/* Main 3-Band Felt Layout */}
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between gap-1.5 overflow-y-auto px-3 sm:px-5 py-1.5">
-        {/* Band 1: Opponent Info + Opponent Melds */}
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-start">
-          <div className="lg:col-span-4 flex items-center gap-3 rounded-xl border border-emerald-200/15 bg-black/20 px-3 py-2">
-            <div className="flex items-center">
-              {Array.from({ length: oppBackCount }).map((_, idx) => (
-                <div key={idx} className={idx === 0 ? '' : '-ml-7'}>
-                  <PlayingCard faceDown backColor="red" size="xs" />
-                </div>
-              ))}
-              {oppBackCount === 0 && (
-                <span className="text-xs italic text-emerald-200/60">0 cards</span>
-              )}
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className="truncate text-sm font-bold text-white">
-                  {oppPlayer.name}
-                </span>
-                {oppPlayer.isActive && (
-                  <span className="rounded bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-stone-950">
-                    TURN
-                  </span>
-                )}
-              </div>
-              <div className="text-xs text-emerald-200/80">
-                {oppPlayer.handCount} card{oppPlayer.handCount === 1 ? '' : 's'} in hand
-              </div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-8">
-            <MeldZone
-              title={`${possessive(oppTeam.name)} Melds`}
-              melds={oppTeam.melds}
-              redThrees={oppTeam.redThrees}
-              hasMadeInitialMeld={oppTeam.hasMadeInitialMeld}
-              compact
-            />
-          </div>
-        </section>
+        {/* Band 1: Opponents / Partner Strip + Melds */}
+        <OpponentStrip view={view} />
 
         {/* Band 2: Center Stock & Discard + Action Log */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center py-1">
@@ -637,7 +611,11 @@ export const TableScreen: React.FC<TableScreenProps> = ({
         {/* Band 3: Player Melds + Contextual Action Bar + Adaptive Hand */}
         <section className="flex flex-col gap-2">
           <MeldZone
-            title={`${possessive(viewerPlayer.name)} Melds`}
+            title={
+              isPartnership
+                ? `Your Team's Melds (${myTeam.name})`
+                : `${possessive(viewerPlayer.name)} Melds`
+            }
             melds={myTeam.melds}
             redThrees={myTeam.redThrees}
             hasMadeInitialMeld={myTeam.hasMadeInitialMeld}
@@ -693,8 +671,17 @@ export const TableScreen: React.FC<TableScreenProps> = ({
               onDispatch({ type: 'UNDO_TURN_MELDS', playerId: view.viewerId })
             }
             onDiscardSelected={handleDiscardSelected}
+            onAskPartnerGoOut={() =>
+              onDispatch({ type: 'ASK_PARTNER_GO_OUT', playerId: view.viewerId })
+            }
             onClearSelection={() => setSelectedIds(new Set())}
           />
+
+          {hideHandForBotInterlude && !curtain.open && (
+            <div className="flex min-h-[112px] items-center justify-center rounded-xl border border-emerald-200/15 bg-black/25 px-4 text-sm text-emerald-100/80">
+              Hands hidden while bot takes its turn…
+            </div>
+          )}
 
           {!handHidden && (
             <CardHand
@@ -725,6 +712,20 @@ export const TableScreen: React.FC<TableScreenProps> = ({
       />
 
       <GuardrailModal prompt={guardrail} onCancel={() => setGuardrail(null)} />
+
+      <PartnerPromptModal
+        open={view.legalHints.mustAnswerPartnerGoOut && !curtain.open}
+        askerName={partnerAskerName}
+        partnerHand={view.viewerHand}
+        teamCanastas={view.legalHints.viewerCanastas}
+        onAnswer={(allow) =>
+          onDispatch({
+            type: 'ANSWER_PARTNER_GO_OUT',
+            playerId: view.viewerId,
+            allow,
+          })
+        }
+      />
 
       <HandSummaryModal
         summary={

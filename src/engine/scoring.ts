@@ -6,6 +6,7 @@ import type {
   HandSummary,
   PlayerState,
   RulesetConfig,
+  TeamId,
   TeamState,
 } from './types';
 
@@ -13,7 +14,7 @@ export function calculateTeamHandScore(
   team: TeamState,
   players: readonly PlayerState[],
   handNumber: number,
-  wentOutTeamId: 'team-0' | 'team-1' | null,
+  wentOutTeamId: TeamId | null,
   wentOutConcealed: boolean,
   ruleset: RulesetConfig,
 ): HandScoreBreakdown {
@@ -99,63 +100,47 @@ export function finalizeHand(
   const wentOutTeamId = wentOutPlayer ? wentOutPlayer.teamId : null;
   const wentOutConcealed = reason === 'WENT_OUT_CONCEALED';
 
-  const b0 = calculateTeamHandScore(
-    state.teams[0],
-    state.players,
-    state.handNumber,
-    wentOutTeamId,
-    wentOutConcealed,
-    state.ruleset,
-  );
-  const b1 = calculateTeamHandScore(
-    state.teams[1],
-    state.players,
-    state.handNumber,
-    wentOutTeamId,
-    wentOutConcealed,
-    state.ruleset,
+  const breakdowns = state.teams.map((team) =>
+    calculateTeamHandScore(
+      team,
+      state.players,
+      state.handNumber,
+      wentOutTeamId,
+      wentOutConcealed,
+      state.ruleset,
+    ),
   );
 
-  const nextTeams: [TeamState, TeamState] = [
-    {
-      ...state.teams[0],
-      cumulativeScore: b0.cumulativeAfterHand,
-      handHistory: [...state.teams[0].handHistory, b0],
-    },
-    {
-      ...state.teams[1],
-      cumulativeScore: b1.cumulativeAfterHand,
-      handHistory: [...state.teams[1].handHistory, b1],
-    },
-  ];
+  const nextTeams: TeamState[] = state.teams.map((team, idx) => ({
+    ...team,
+    cumulativeScore: breakdowns[idx].cumulativeAfterHand,
+    handHistory: [...team.handHistory, breakdowns[idx]],
+  }));
 
   const summary: HandSummary = {
     handNumber: state.handNumber,
     reason,
     wentOutPlayerId,
     wentOutTeamId,
-    breakdowns: [b0, b1],
+    breakdowns,
   };
 
   let isMatchOver = false;
-  let winnerTeamId: 'team-0' | 'team-1' | null = null;
+  let winnerTeamId: TeamId | null = null;
+  const maxScore = Math.max(...breakdowns.map((b) => b.cumulativeAfterHand));
 
-  if (state.ruleset.winScore === null) {
-    // Single-hand match
-    isMatchOver = true;
-  } else if (
-    b0.cumulativeAfterHand >= state.ruleset.winScore ||
-    b1.cumulativeAfterHand >= state.ruleset.winScore
-  ) {
+  if (state.ruleset.winScore === null || maxScore >= state.ruleset.winScore) {
     isMatchOver = true;
   }
 
   if (isMatchOver) {
-    if (b0.cumulativeAfterHand > b1.cumulativeAfterHand) {
-      winnerTeamId = 'team-0';
-    } else if (b1.cumulativeAfterHand > b0.cumulativeAfterHand) {
-      winnerTeamId = 'team-1';
-    } else if (wentOutTeamId) {
+    const leaders = breakdowns.filter((b) => b.cumulativeAfterHand === maxScore);
+    if (leaders.length === 1) {
+      winnerTeamId = leaders[0].teamId;
+    } else if (
+      wentOutTeamId &&
+      leaders.some((l) => l.teamId === wentOutTeamId)
+    ) {
       winnerTeamId = wentOutTeamId;
     } else {
       winnerTeamId = null; // Exact tie
@@ -175,6 +160,7 @@ export function finalizeHand(
     ...state,
     teams: nextTeams,
     phase: isMatchOver ? 'MATCH_OVER' : 'HAND_OVER',
+    partnerGoOut: null,
     turnUndoCheckpoint: null,
     lastHandSummary: summary,
     winnerTeamId,

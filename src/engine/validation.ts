@@ -16,6 +16,7 @@ import type {
   MeldSubmission,
   NaturalRank,
   RulesetConfig,
+  TeamId,
   TeamState,
 } from './types';
 
@@ -49,6 +50,37 @@ export function buildMeldObject(id: string, rank: MeldRank, cards: Card[]): Meld
     isCanasta,
     canastaType,
   };
+}
+
+export function getTeamIndex(teams: readonly TeamState[], teamId: TeamId): number {
+  const idx = teams.findIndex((t) => t.id === teamId);
+  if (idx === -1) {
+    throw new Error(`Unknown teamId: ${teamId}`);
+  }
+  return idx;
+}
+
+export function getTeamById(
+  teams: readonly TeamState[],
+  teamId: TeamId,
+): TeamState {
+  return teams[getTeamIndex(teams, teamId)];
+}
+
+export function getActiveTeam(state: GameState): TeamState {
+  const player = state.players[state.activePlayerIndex];
+  return getTeamById(state.teams, player.teamId);
+}
+
+export function getPartnerPlayerId(
+  state: GameState,
+  playerId: string,
+): string | null {
+  const player = state.players.find((p) => p.id === playerId);
+  if (!player) return null;
+  const team = getTeamById(state.teams, player.teamId);
+  if (team.playerIds.length !== 2) return null;
+  return team.playerIds.find((id) => id !== playerId) ?? null;
 }
 
 export function validateMeldCards(
@@ -256,23 +288,12 @@ export function inferMeldRank(cards: readonly Card[]): MeldRank | null {
   return foundRank;
 }
 
-export function getActiveTeam(state: GameState): TeamState {
-  const player = state.players[state.activePlayerIndex];
-  return state.teams[player.teamId === 'team-0' ? 0 : 1];
-}
-
-export function getTeamById(
-  teams: readonly [TeamState, TeamState],
-  teamId: 'team-0' | 'team-1',
-): TeamState {
-  return teams[teamId === 'team-0' ? 0 : 1];
-}
-
 export function isMandatoryStockExhaustedTake(
   state: GameState,
   playerId: string,
 ): boolean {
   if (state.phase !== 'DRAW' || state.stock.length > 0) return false;
+  if (state.partnerGoOut?.status === 'PENDING') return false;
   const player = state.players[state.activePlayerIndex];
   if (player.id !== playerId) return false;
   if (!canTopDiscardBeClaimed(state.discardPile)) return false;
@@ -284,14 +305,12 @@ export function isMandatoryStockExhaustedTake(
   const existingMeld = team.melds.find((m) => m.rank === top.rank);
   if (!existingMeld) return false;
 
-  // Taking by adding top card to existing meld puts the remaining discard pile
-  // (minus Red 3s) into hand; if pile has 1 card, hand size stays unchanged,
-  // which is always legal as long as hand.length > 0 or team can go out.
   const remainingNonRed3 = state.discardPile.cards
     .slice(0, -1)
     .filter((c) => !isRedThree(c)).length;
   const postHandCount = player.hand.length + remainingNonRed3;
   if (postHandCount <= 1) {
+    if (state.partnerGoOut?.status === 'DENIED') return false;
     const postCanastas = countTeamCanastas(
       team.melds.map((m) =>
         m.id === existingMeld.id
@@ -310,6 +329,7 @@ export function canPlayerTakeDiscardPile(
   playerId: string,
 ): boolean {
   if (state.phase !== 'DRAW') return false;
+  if (state.partnerGoOut?.status === 'PENDING') return false;
   const player = state.players[state.activePlayerIndex];
   if (player.id !== playerId) return false;
   if (!canTopDiscardBeClaimed(state.discardPile)) return false;
@@ -327,22 +347,19 @@ export function canPlayerTakeDiscardPile(
       return true;
     }
     if (existingMeld) {
-      // Frozen pile cannot be taken via existing meld; wait — in Bicycle Canasta,
-      // can you take a frozen pile with a natural pair from hand even if you ALREADY have a meld of that rank?
-      // Yes! If you hold a natural pair of the rank in hand, you show the pair + top card and add all 3 to your meld.
       return matchingNaturals.length >= 2;
     }
     if (frozen) {
       return matchingNaturals.length >= 2;
     }
-    // Unfrozen, no existing meld: need natural pair OR 1 natural + 1 wild
-    return matchingNaturals.length >= 2 || (matchingNaturals.length >= 1 && wilds.length >= 1);
+    return (
+      matchingNaturals.length >= 2 ||
+      (matchingNaturals.length >= 1 && wilds.length >= 1)
+    );
   }
 
-  // Team has NOT made initial meld: pile is frozen for them -> MUST hold natural pair matching topCard
   if (matchingNaturals.length < 2) return false;
 
-  // Check if player can reach required initial meld points using topCard + natural pair + rest of hand
   const required = getRequiredInitialMeldPoints(
     state.ruleset,
     team.cumulativeScore,
@@ -377,13 +394,11 @@ function estimateMaxInitialMeldPointsWithTopCard(
   const topNaturals = byRank.get(topRank) ?? [];
   if (topNaturals.length < 2) return 0;
 
-  // Base points from the top card + all naturals of topRank
   let totalPoints =
     getCardPoints(topCard) +
     topNaturals.reduce((sum, c) => sum + getCardPoints(c), 0);
-  // Count how many wild slots exist across all valid natural groups (>= 2 naturals)
   let totalWildSlots = ruleset.requireNaturalMajority
-    ? Math.min(ruleset.maxWildsPerMeld, topNaturals.length) // topCard + topNaturals.length naturals => max wilds = naturals - 1 = topNaturals.length
+    ? Math.min(ruleset.maxWildsPerMeld, topNaturals.length)
     : ruleset.maxWildsPerMeld;
 
   for (const [rank, cards] of byRank.entries()) {
@@ -393,18 +408,13 @@ function estimateMaxInitialMeldPointsWithTopCard(
       totalWildSlots += ruleset.requireNaturalMajority
         ? Math.min(ruleset.maxWildsPerMeld, cards.length - 1)
         : ruleset.maxWildsPerMeld;
-    } else if (cards.length >= ruleset.minNaturalsPerMeld) {
-      // Pair can become a 3-card meld if at least 1 wild is assigned
-      // Accounted greedily below
     }
   }
 
-  // Sort wilds descending by point value (Jokers 50, then 2s 20)
   const sortedWilds = wilds
     .slice()
     .sort((a, b) => getCardPoints(b) - getCardPoints(a));
 
-  // Consider pairs (length === 2) sorted by pair points descending
   const pairs = [...byRank.entries()]
     .filter(([r, cards]) => r !== topRank && cards.length === 2)
     .sort(
@@ -413,8 +423,7 @@ function estimateMaxInitialMeldPointsWithTopCard(
         a[1].reduce((s, c) => s + getCardPoints(c), 0),
     );
 
-  // Pair activation: each pair needs 1 wild to unlock pairPoints + additional wild slots
-  let remainingWilds = sortedWilds.slice();
+  const remainingWilds = sortedWilds.slice();
   for (const [, pairCards] of pairs) {
     if (remainingWilds.length === 0) break;
     const wild = remainingWilds.shift()!;
@@ -426,7 +435,6 @@ function estimateMaxInitialMeldPointsWithTopCard(
     totalWildSlots += extraSlots;
   }
 
-  // Assign any remaining wilds into open wild slots
   const assignable = Math.min(remainingWilds.length, totalWildSlots);
   for (let i = 0; i < assignable; i++) {
     totalPoints += getCardPoints(remainingWilds[i]);
@@ -435,19 +443,214 @@ function estimateMaxInitialMeldPointsWithTopCard(
   return totalPoints;
 }
 
+/**
+ * Checks whether `playerId` can legally go out right now during `MELD_OR_DISCARD`
+ * (used to enforce binding Partner Permission YES without ever soft-locking!).
+ */
+export function canPlayerGoOutNow(state: GameState, playerId: string): boolean {
+  if (state.phase !== 'MELD_OR_DISCARD') return false;
+  const player = state.players[state.activePlayerIndex];
+  if (player.id !== playerId) return false;
+  const team = getTeamById(state.teams, player.teamId);
+  const ruleset = state.ruleset;
+  const hand = player.hand;
+
+  if (hand.length === 0) {
+    return countTeamCanastas(team.melds) >= ruleset.canastasRequiredToGoOut;
+  }
+
+  // Try each possible final discard (or null = meld every single card out!)
+  const candidates: Array<Card | null> = [null, ...hand];
+
+  for (const discardChoice of candidates) {
+    if (discardChoice && isRedThree(discardChoice)) continue;
+    const toMeld = discardChoice
+      ? hand.filter((c) => c.id !== discardChoice.id)
+      : hand;
+
+    if (
+      canCardsAllBeMeldedOut(
+        toMeld,
+        team,
+        player.id,
+        state.tookDiscardPileThisTurn,
+        state.meldedThisTurn,
+        ruleset,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function canCardsAllBeMeldedOut(
+  cards: readonly Card[],
+  team: TeamState,
+  playerId: string,
+  tookDiscardPileThisTurn: boolean,
+  meldedThisTurn: boolean,
+  ruleset: RulesetConfig,
+): boolean {
+  const existingCanastas = countTeamCanastas(team.melds);
+  if (cards.length === 0) {
+    return existingCanastas >= ruleset.canastasRequiredToGoOut;
+  }
+
+  const existingByRank = new Map<NaturalRank, Meld>();
+  for (const m of team.melds) {
+    if (m.rank !== '3B') existingByRank.set(m.rank, m);
+  }
+
+  const byRank = new Map<NaturalRank, Card[]>();
+  const wilds: Card[] = [];
+  const blackThrees: Card[] = [];
+
+  for (const c of cards) {
+    if (isRedThree(c)) return false;
+    if (isWildCard(c)) wilds.push(c);
+    else if (isBlackThree(c)) blackThrees.push(c);
+    else if (isNaturalRank(c.rank)) {
+      const arr = byRank.get(c.rank) ?? [];
+      arr.push(c);
+      byRank.set(c.rank, arr);
+    }
+  }
+
+  // Black 3s must be 0 or 3..4 (and no existing 3B meld)
+  if (blackThrees.length > 0) {
+    if (
+      !ruleset.allowBlackThreeMeldOnGoOut ||
+      blackThrees.length < 3 ||
+      blackThrees.length > 4 ||
+      team.melds.some((m) => m.rank === '3B')
+    ) {
+      return false;
+    }
+  }
+
+  // Every rank group NOT already on the table needs >= minNaturalsPerMeld naturals
+  // and enough wilds to reach minMeldSize.
+  let minWildsRequired = 0;
+  let totalWildCapacity = 0;
+  let naturalOnlyCanastasAdded = 0;
+
+  // Track non-Canasta melds that could reach 7 with extra wilds: [cardsNeeded, wildRoomLeft]
+  const canastaOpportunities: Array<{ needed: number; wildRoom: number }> = [];
+
+  // Existing melds that receive naturals from hand (or could absorb wilds)
+  for (const m of team.melds) {
+    if (m.rank === '3B') continue;
+    const addedNats = byRank.get(m.rank)?.length ?? 0;
+    const totalNats = m.naturalCount + addedNats;
+    const maxWilds = ruleset.requireNaturalMajority
+      ? Math.min(ruleset.maxWildsPerMeld, totalNats - 1)
+      : ruleset.maxWildsPerMeld;
+    const room = Math.max(0, maxWilds - m.wildCount);
+    totalWildCapacity += room;
+    const sizeWithoutNewWilds = m.cards.length + addedNats;
+    if (!m.isCanasta) {
+      if (sizeWithoutNewWilds >= 7) {
+        naturalOnlyCanastasAdded++;
+      } else {
+        const needed = 7 - sizeWithoutNewWilds;
+        if (room >= needed) {
+          canastaOpportunities.push({ needed, wildRoom: room });
+        }
+      }
+    }
+  }
+
+  // New rank groups from hand
+  for (const [rank, group] of byRank.entries()) {
+    if (existingByRank.has(rank)) continue;
+    if (group.length < ruleset.minNaturalsPerMeld) return false;
+    const neededForMeld = Math.max(0, ruleset.minMeldSize - group.length);
+    const maxWilds = ruleset.requireNaturalMajority
+      ? Math.min(ruleset.maxWildsPerMeld, group.length - 1)
+      : ruleset.maxWildsPerMeld;
+    if (neededForMeld > maxWilds) return false;
+    minWildsRequired += neededForMeld;
+    const extraRoom = maxWilds - neededForMeld;
+    totalWildCapacity += maxWilds;
+
+    const baseSize = group.length + neededForMeld;
+    if (baseSize >= 7) {
+      naturalOnlyCanastasAdded++;
+    } else {
+      const extraNeeded = 7 - baseSize;
+      if (extraRoom >= extraNeeded) {
+        canastaOpportunities.push({ needed: extraNeeded, wildRoom: extraRoom });
+      }
+    }
+  }
+
+  if (wilds.length < minWildsRequired) return false;
+  if (wilds.length > totalWildCapacity) return false;
+
+  // Greedily allocate remaining wilds to finish Canastas (fewest needed first)
+  let spareWilds = wilds.length - minWildsRequired;
+  canastaOpportunities.sort((a, b) => a.needed - b.needed);
+  let extraCanastas = 0;
+  for (const opp of canastaOpportunities) {
+    if (spareWilds >= opp.needed) {
+      spareWilds -= opp.needed;
+      extraCanastas++;
+    }
+  }
+
+  const totalCanastas =
+    existingCanastas + naturalOnlyCanastasAdded + extraCanastas;
+  if (totalCanastas < ruleset.canastasRequiredToGoOut) return false;
+
+  // Check initial meld threshold if team hasn't melded yet
+  if (!team.hasMadeInitialMeld) {
+    const playerMeldedBefore = team.meldedOnPriorTurnPlayerIds.includes(playerId);
+    const waivedByConcealedStock =
+      !playerMeldedBefore && !meldedThisTurn && !tookDiscardPileThisTurn;
+    if (!waivedByConcealedStock) {
+      const pts = cards.reduce((s, c) => s + getCardPoints(c), 0);
+      const req = getRequiredInitialMeldPoints(ruleset, team.cumulativeScore);
+      if (pts < req) return false;
+    }
+  }
+
+  return true;
+}
+
 export function validateTakeDiscardPileAction(
   state: GameState,
   action: Extract<GameAction, { type: 'TAKE_DISCARD_PILE' }>,
-): { ok: true; nextMelds: Meld[]; usedHandCardIds: Set<string>; meldPoints: number } | { ok: false; error: string } {
+):
+  | {
+      ok: true;
+      nextMelds: Meld[];
+      usedHandCardIds: Set<string>;
+      meldPoints: number;
+    }
+  | { ok: false; error: string } {
   if (state.phase !== 'DRAW') {
-    return { ok: false, error: 'You can only take the discard pile during the draw phase.' };
+    return {
+      ok: false,
+      error: 'You can only take the discard pile during the draw phase.',
+    };
+  }
+  if (state.partnerGoOut?.status === 'PENDING') {
+    return {
+      ok: false,
+      error: 'Waiting for your partner to answer your go-out request.',
+    };
   }
   const player = state.players[state.activePlayerIndex];
   if (player.id !== action.playerId) {
     return { ok: false, error: 'It is not your turn.' };
   }
   if (!canTopDiscardBeClaimed(state.discardPile)) {
-    return { ok: false, error: 'The top card of the discard pile cannot be taken.' };
+    return {
+      ok: false,
+      error: 'The top card of the discard pile cannot be taken.',
+    };
   }
 
   const team = getTeamById(state.teams, player.teamId);
@@ -463,7 +666,8 @@ export function validateTakeDiscardPileAction(
     if (frozen) {
       return {
         ok: false,
-        error: 'The discard pile is frozen — you must meld the top card with a natural pair from your hand.',
+        error:
+          'The discard pile is frozen — you must meld the top card with a natural pair from your hand.',
       };
     }
     const targetMeldId = action.topCardUsage.meldId;
@@ -472,17 +676,20 @@ export function validateTakeDiscardPileAction(
       return { ok: false, error: 'Target meld not found.' };
     }
     if (nextMelds[idx].rank !== topRank) {
-      return { ok: false, error: `Top card ${topRank} does not match target meld rank ${nextMelds[idx].rank}.` };
+      return {
+        ok: false,
+        error: `Top card ${topRank} does not match target meld rank ${nextMelds[idx].rank}.`,
+      };
     }
     const check = validateAddToMeld(nextMelds[idx], [topCard], state.ruleset);
-    if (!check.valid) return { ok: false, error: check.reason ?? 'Invalid addition to meld.' };
+    if (!check.valid)
+      return { ok: false, error: check.reason ?? 'Invalid addition to meld.' };
     nextMelds[idx] = buildMeldObject(nextMelds[idx].id, nextMelds[idx].rank, [
       ...nextMelds[idx].cards,
       topCard,
     ]);
     meldPoints += getCardPoints(topCard);
   } else {
-    // kind === 'new_meld' (or adding natural pair + topCard into an existing meld of same rank when frozen)
     const handCards: Card[] = [];
     for (const id of action.topCardUsage.handCardIds) {
       if (usedHandCardIds.has(id)) {
@@ -494,11 +701,14 @@ export function validateTakeDiscardPileAction(
       handCards.push(card);
     }
 
-    const matchingNaturalsInSelection = handCards.filter((c) => c.rank === topRank).length;
+    const matchingNaturalsInSelection = handCards.filter(
+      (c) => c.rank === topRank,
+    ).length;
     if (frozen && matchingNaturalsInSelection < 2) {
       return {
         ok: false,
-        error: 'The discard pile is frozen — you must use at least two natural matching cards from your hand.',
+        error:
+          'The discard pile is frozen — you must use at least two natural matching cards from your hand.',
       };
     }
 
@@ -506,9 +716,13 @@ export function validateTakeDiscardPileAction(
     const combinedNew = [topCard, ...handCards];
 
     if (existingIdx !== -1) {
-      const check = validateAddToMeld(nextMelds[existingIdx], combinedNew, state.ruleset);
-      if (!check.valid) return { ok: false, error: check.reason ?? 'Invalid cards for existing meld.' };
-      // Also ensure the topCard + handCards itself meets frozen pair rule (already checked above)
+      const check = validateAddToMeld(
+        nextMelds[existingIdx],
+        combinedNew,
+        state.ruleset,
+      );
+      if (!check.valid)
+        return { ok: false, error: check.reason ?? 'Invalid cards for existing meld.' };
       nextMelds[existingIdx] = buildMeldObject(
         nextMelds[existingIdx].id,
         nextMelds[existingIdx].rank,
@@ -517,25 +731,29 @@ export function validateTakeDiscardPileAction(
       meldPoints += check.points;
     } else {
       const check = validateMeldCards(combinedNew, topRank, state.ruleset);
-      if (!check.valid) return { ok: false, error: check.reason ?? 'Invalid meld with top discard card.' };
+      if (!check.valid)
+        return { ok: false, error: check.reason ?? 'Invalid meld with top discard card.' };
       nextMelds.push(buildMeldObject(`temp-top-${topRank}`, topRank, combinedNew));
       meldPoints += check.points;
     }
   }
 
-  // Process any additional initial melds submitted alongside taking the discard pile
   const additional = action.additionalInitialMelds ?? [];
   if (additional.length > 0 && team.hasMadeInitialMeld) {
     return {
       ok: false,
-      error: 'Additional melds should be played after taking the discard pile once initial meld is complete.',
+      error:
+        'Additional melds should be played after taking the discard pile once initial meld is complete.',
     };
   }
 
   for (let i = 0; i < additional.length; i++) {
     const item = additional[i];
     if (item.rank === '3B') {
-      return { ok: false, error: 'Black 3s cannot be used as part of an initial meld pickup.' };
+      return {
+        ok: false,
+        error: 'Black 3s cannot be used as part of an initial meld pickup.',
+      };
     }
     if (nextMelds.some((m) => m.rank === item.rank)) {
       return {
@@ -554,7 +772,8 @@ export function validateTakeDiscardPileAction(
       cards.push(c);
     }
     const check = validateMeldCards(cards, item.rank, state.ruleset);
-    if (!check.valid) return { ok: false, error: check.reason ?? 'Invalid additional meld.' };
+    if (!check.valid)
+      return { ok: false, error: check.reason ?? 'Invalid additional meld.' };
     nextMelds.push(buildMeldObject(`temp-init-${i}-${item.rank}`, item.rank, cards));
     meldPoints += check.points;
   }
@@ -572,13 +791,19 @@ export function validateTakeDiscardPileAction(
     }
   }
 
-  // Verify post-pickup hand isn't illegally empty without enough Canastas
   const buriedNonRed3Count = state.discardPile.cards
     .slice(0, -1)
     .filter((c) => !isRedThree(c)).length;
   const remainingHandCount =
     player.hand.length - usedHandCardIds.size + buriedNonRed3Count;
   if (remainingHandCount <= 1) {
+    if (state.partnerGoOut?.status === 'DENIED') {
+      return {
+        ok: false,
+        error:
+          'Your partner denied going out — you must keep at least 2 cards before discarding on this turn.',
+      };
+    }
     const canastas = countTeamCanastas(nextMelds);
     if (canastas < state.ruleset.canastasRequiredToGoOut) {
       return {
@@ -594,15 +819,23 @@ export function validateTakeDiscardPileAction(
 export function validateCommitMeldsAction(
   state: GameState,
   action: Extract<GameAction, { type: 'COMMIT_MELDS' }>,
-): {
-  ok: true;
-  nextMelds: Meld[];
-  usedHandCardIds: Set<string>;
-  meldPoints: number;
-  isConcealedGoOutCandidate: boolean;
-} | { ok: false; error: string } {
+):
+  | {
+      ok: true;
+      nextMelds: Meld[];
+      usedHandCardIds: Set<string>;
+      meldPoints: number;
+      isConcealedGoOutCandidate: boolean;
+    }
+  | { ok: false; error: string } {
   if (state.phase !== 'MELD_OR_DISCARD') {
     return { ok: false, error: 'Melds can only be played after drawing.' };
+  }
+  if (state.partnerGoOut?.status === 'PENDING') {
+    return {
+      ok: false,
+      error: 'Waiting for your partner to answer your go-out request.',
+    };
   }
   const player = state.players[state.activePlayerIndex];
   if (player.id !== action.playerId) {
@@ -617,11 +850,13 @@ export function validateCommitMeldsAction(
   const usedHandCardIds = new Set<string>();
   const nextMelds = team.melds.map((m) => ({ ...m, cards: m.cards.slice() }));
 
-  // First pass: verify card ownership & uniqueness and calculate post-submission hand count
   const resolvedSubmissions: Array<{ sub: MeldSubmission; cards: Card[] }> = [];
   for (const sub of action.submissions) {
     if (sub.cardIds.length === 0) {
-      return { ok: false, error: 'Each meld submission must include at least one card.' };
+      return {
+        ok: false,
+        error: 'Each meld submission must include at least one card.',
+      };
     }
     const cards: Card[] = [];
     for (const id of sub.cardIds) {
@@ -641,7 +876,6 @@ export function validateCommitMeldsAction(
     (s) => s.kind === 'new_meld' && s.rank === '3B',
   );
 
-  // Simulate melds (temporarily allowing 3B if player might be going out; verified right after)
   let meldPoints = 0;
   for (let i = 0; i < resolvedSubmissions.length; i++) {
     const { sub, cards } = resolvedSubmissions[i];
@@ -664,7 +898,8 @@ export function validateCommitMeldsAction(
         return { ok: false, error: 'Target meld not found.' };
       }
       const check = validateAddToMeld(nextMelds[idx], cards, state.ruleset);
-      if (!check.valid) return { ok: false, error: check.reason ?? 'Invalid meld addition.' };
+      if (!check.valid)
+        return { ok: false, error: check.reason ?? 'Invalid meld addition.' };
       nextMelds[idx] = buildMeldObject(nextMelds[idx].id, nextMelds[idx].rank, [
         ...nextMelds[idx].cards,
         ...cards,
@@ -674,6 +909,14 @@ export function validateCommitMeldsAction(
   }
 
   const postCanastas = countTeamCanastas(nextMelds);
+
+  if (remainingHandCount <= 1 && state.partnerGoOut?.status === 'DENIED') {
+    return {
+      ok: false,
+      error:
+        'Your partner denied going out — you must keep at least 2 cards before discarding on this turn.',
+    };
+  }
 
   if (hasBlackThreeSub) {
     if (

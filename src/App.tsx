@@ -29,6 +29,7 @@ export const App: React.FC = () => {
       toast={session.toast}
       onDismissToast={session.dismissToast}
       curtain={session.curtain}
+      hideHandForBotInterlude={session.hideHandForBotInterlude}
       onRevealCurtain={session.revealCurtain}
       onToggleManualHide={session.toggleManualHide}
       onDispatch={session.dispatch}

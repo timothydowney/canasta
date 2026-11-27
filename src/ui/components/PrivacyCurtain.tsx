@@ -41,7 +41,8 @@ export const PrivacyCurtain: React.FC<PrivacyCurtainProps> = ({
             : `Pass Laptop to ${curtain.targetPlayerName}`}
         </h2>
         <p className="mt-2 text-sm text-emerald-100/80">
-          Make sure other players aren&apos;t peeking before revealing your hand.
+          {curtain.subtitle ??
+            "Make sure other players aren't peeking before revealing your hand."}
         </p>
 
         {curtain.recap.length > 0 && (

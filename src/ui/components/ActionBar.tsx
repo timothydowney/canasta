@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Check,
+  HelpCircle,
   Layers,
   PlusCircle,
   RotateCcw,
@@ -49,6 +50,7 @@ export interface ActionBarProps {
   onClearStaged: () => void;
   onUndoTurnMelds: () => void;
   onDiscardSelected: () => void;
+  onAskPartnerGoOut: () => void;
   onClearSelection: () => void;
 }
 
@@ -75,10 +77,23 @@ export const ActionBar: React.FC<ActionBarProps> = ({
   onClearStaged,
   onUndoTurnMelds,
   onDiscardSelected,
+  onAskPartnerGoOut,
   onClearSelection,
 }) => {
   const { legalHints, phase, discardPile } = view;
   const activePlayer = view.players.find((p) => p.id === view.activePlayerId);
+
+  if (legalHints.partnerGoOutStatus === 'PENDING') {
+    const partner = view.players.find(
+      (p) => p.id === view.partnerGoOut?.partnerPlayerId,
+    );
+    return (
+      <div className="flex items-center justify-center rounded-xl border border-amber-300/40 bg-black/35 px-4 py-2.5 text-sm text-amber-200">
+        <span className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse mr-2.5" />
+        Waiting for <strong className="mx-1 text-white">{partner?.name ?? 'Partner'}</strong> to answer &ldquo;May I go out?&rdquo;…
+      </div>
+    );
+  }
 
   if (!legalHints.isViewerTurn) {
     return (
@@ -235,6 +250,15 @@ export const ActionBar: React.FC<ActionBarProps> = ({
               Take Discard Pile ({discardPile.count})
             </button>
           )}
+          {legalHints.canAskPartnerGoOut && (
+            <button
+              type="button"
+              onClick={onAskPartnerGoOut}
+              className="inline-flex items-center gap-1 rounded-lg border border-amber-300/45 bg-amber-400/10 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-400/20 cursor-pointer"
+            >
+              <HelpCircle className="h-3.5 w-3.5" /> Ask Partner to Go Out
+            </button>
+          )}
           {legalHints.canPassExhaustedStock && (
             <button
               type="button"
@@ -273,6 +297,16 @@ export const ActionBar: React.FC<ActionBarProps> = ({
           ) : (
             <span className="text-emerald-200/75">
               Canastas: {legalHints.viewerCanastas} / {legalHints.canastasRequired} to go out
+            </span>
+          )}
+          {legalHints.partnerGoOutStatus === 'APPROVED' && (
+            <span className="rounded-full bg-emerald-500/25 border border-emerald-400/50 px-2.5 py-0.5 font-bold text-emerald-200">
+              Partner said YES — must go out!
+            </span>
+          )}
+          {legalHints.partnerGoOutStatus === 'DENIED' && (
+            <span className="rounded-full bg-rose-500/25 border border-rose-400/50 px-2.5 py-0.5 font-bold text-rose-200">
+              Partner said NO — do not go out
             </span>
           )}
         </div>
@@ -323,6 +357,17 @@ export const ActionBar: React.FC<ActionBarProps> = ({
                 <Trash2 className="h-3.5 w-3.5" /> Clear Staged
               </button>
             </>
+          )}
+
+          {/* Optional Ask Partner to Go Out (4P Partnership) */}
+          {legalHints.canAskPartnerGoOut && (
+            <button
+              type="button"
+              onClick={onAskPartnerGoOut}
+              className="inline-flex items-center gap-1 rounded-lg border border-amber-300/45 bg-amber-400/10 px-2.5 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-400/20 cursor-pointer"
+            >
+              <HelpCircle className="h-3.5 w-3.5" /> Ask Partner
+            </button>
           )}
 
           {/* Undo Melds Made This Turn */}
