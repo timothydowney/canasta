@@ -2,12 +2,16 @@ import React, { useState } from 'react';
 import {
   BookOpen,
   Bot,
+  Laptop,
+  LogIn,
   Play,
   RotateCcw,
   Sparkles,
   Trash2,
+  Tv,
   User,
   Users,
+  Wifi,
 } from 'lucide-react';
 import {
   ALL_RULESETS,
@@ -19,15 +23,28 @@ import {
   type RulesetId,
   type TeamId,
 } from '../../engine';
+import type { HostDisplayMode } from '../../shared/protocol';
 import type { NewMatchRequest, SavedSession } from '../../store';
 import { PlayingCard } from '../components/PlayingCard';
 import { RulesScoringDrawer } from '../components/RulesScoringDrawer';
 
 export interface StartScreenProps {
   savedSummary: SavedSession | null;
+  initialJoinCode?: string | null;
+  remoteError?: string | null;
   onStartNewMatch: (req: NewMatchRequest) => void;
   onResumeSaved: () => void;
   onDiscardSaved: () => void;
+  onHostLanRoom: (req: {
+    rulesetId: RulesetId;
+    matchLength: MatchLengthPreset;
+    hostDisplayMode: HostDisplayMode;
+    hostName?: string;
+  }) => Promise<boolean>;
+  onJoinLanRoom: (req: {
+    roomCode: string;
+    playerName: string;
+  }) => Promise<boolean>;
 }
 
 interface SeatDraft {
@@ -98,15 +115,30 @@ function teamForSeat(rulesetId: RulesetId, seatIndex: number): TeamId {
 
 export const StartScreen: React.FC<StartScreenProps> = ({
   savedSummary,
+  initialJoinCode,
+  remoteError,
   onStartNewMatch,
   onResumeSaved,
   onDiscardSaved,
+  onHostLanRoom,
+  onJoinLanRoom,
 }) => {
+  const [section, setSection] = useState<'local' | 'host_lan' | 'join_lan'>(
+    initialJoinCode ? 'join_lan' : 'local',
+  );
   const [rulesetId, setRulesetId] = useState<RulesetId>('bicycle-2p-classic');
   const [matchLength, setMatchLength] = useState<MatchLengthPreset>('standard_5000');
   const [seats, setSeats] = useState<SeatDraft[]>(() =>
     buildDefaultSeats('bicycle-2p-classic', 'solo'),
   );
+  const [hostDisplayMode, setHostDisplayMode] =
+    useState<HostDisplayMode>('table_display');
+  const [hostName, setHostName] = useState('Host');
+  const [joinCode, setJoinCode] = useState(
+    (initialJoinCode ?? '').toUpperCase().slice(0, 4),
+  );
+  const [joinName, setJoinName] = useState('');
+  const [busy, setBusy] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
 
   const selectedRuleset = getRulesetById(rulesetId);
@@ -179,6 +211,29 @@ export const StartScreen: React.FC<StartScreenProps> = ({
     });
   };
 
+  const handleHostSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    await onHostLanRoom({
+      rulesetId,
+      matchLength,
+      hostDisplayMode,
+      hostName: hostDisplayMode === 'player' ? hostName : undefined,
+    });
+    setBusy(false);
+  };
+
+  const handleJoinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (joinCode.trim().length < 4) return;
+    setBusy(true);
+    await onJoinLanRoom({
+      roomCode: joinCode.trim().toUpperCase(),
+      playerName: joinName.trim() || 'Player',
+    });
+    setBusy(false);
+  };
+
   const seatLabels = SEAT_DIRECTIONS[selectedRuleset.playerCount];
 
   return (
@@ -214,18 +269,63 @@ export const StartScreen: React.FC<StartScreenProps> = ({
             Canasta
           </h1>
           <p className="mt-0.5 text-xs sm:text-sm text-emerald-100/80">
-            2P Classic • 3P Cutthroat • 4P Partnership • 4P Cutthroat
+            2P Classic • 3P Cutthroat • 4P Partnership • 4P Cutthroat • LAN Phone-Hands
           </p>
         </div>
 
-        {/* Resume Saved Match Banner */}
-        {savedSummary && savedSummary.state.phase !== 'MATCH_OVER' && (
+        {/* Top Mode Tabs: Play Local | Host LAN Room | Join Room */}
+        <div className="mt-5 grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-black/35 p-1">
+          <button
+            type="button"
+            onClick={() => setSection('local')}
+            className={`inline-flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-extrabold transition cursor-pointer ${
+              section === 'local'
+                ? 'bg-amber-400 text-stone-950 shadow'
+                : 'text-emerald-100/80 hover:text-white'
+            }`}
+          >
+            <Laptop className="h-3.5 w-3.5" /> Play Local
+          </button>
+          <button
+            type="button"
+            onClick={() => setSection('host_lan')}
+            className={`inline-flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-extrabold transition cursor-pointer ${
+              section === 'host_lan'
+                ? 'bg-amber-400 text-stone-950 shadow'
+                : 'text-emerald-100/80 hover:text-white'
+            }`}
+          >
+            <Wifi className="h-3.5 w-3.5" /> Host LAN Room
+          </button>
+          <button
+            type="button"
+            onClick={() => setSection('join_lan')}
+            className={`inline-flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-extrabold transition cursor-pointer ${
+              section === 'join_lan'
+                ? 'bg-amber-400 text-stone-950 shadow'
+                : 'text-emerald-100/80 hover:text-white'
+            }`}
+          >
+            <LogIn className="h-3.5 w-3.5" /> Join Room
+          </button>
+        </div>
+
+        {remoteError && section !== 'local' && (
+          <div className="mt-4 rounded-xl border border-rose-400/50 bg-rose-950/75 px-4 py-2.5 text-xs font-semibold text-rose-100">
+            {remoteError}
+          </div>
+        )}
+
+        {/* Resume Saved Match Banner (Local Tab) */}
+        {section === 'local' &&
+          savedSummary &&
+          savedSummary.state.phase !== 'MATCH_OVER' && (
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300/45 bg-amber-400/15 p-3.5">
-            <div>
+            <div className="min-w-0 flex-1">
               <div className="text-[11px] font-bold uppercase tracking-wider text-amber-300">
                 Match in Progress — {savedSummary.state.ruleset.shortName}
               </div>
-              <div className="text-xs sm:text-sm font-semibold text-white">
+              <div className="truncate text-xs sm:text-sm font-semibold text-white">
                 Hand #{savedSummary.state.handNumber} •{' '}
                 {savedSummary.state.teams
                   .map((t) => `${t.name} (${t.cumulativeScore})`)
@@ -252,6 +352,7 @@ export const StartScreen: React.FC<StartScreenProps> = ({
           </div>
         )}
 
+        {section === 'local' && (
         <form onSubmit={handleSubmit} className="mt-5 space-y-4">
           {/* Format Selector */}
           <div>
@@ -465,6 +566,200 @@ export const StartScreen: React.FC<StartScreenProps> = ({
             </button>
           </div>
         </form>
+        )}
+
+        {/* Host LAN Room Form */}
+        {section === 'host_lan' && (
+          <form onSubmit={handleHostSubmit} className="mt-5 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-amber-200/90">
+                Table Format
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {ALL_RULESETS.map((rs) => (
+                  <button
+                    key={rs.id}
+                    type="button"
+                    onClick={() => handleFormatChange(rs.id)}
+                    className={`rounded-xl border p-2.5 text-left transition cursor-pointer ${
+                      rulesetId === rs.id
+                        ? 'border-amber-400 bg-amber-400/20 shadow'
+                        : 'border-white/15 bg-black/25 hover:bg-black/40'
+                    }`}
+                  >
+                    <div className="text-xs font-extrabold text-white">{rs.shortName}</div>
+                    <div className="mt-0.5 text-[10px] text-emerald-100/75">
+                      {rs.dealSize} cards • Draw {rs.drawCount}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-amber-200/90">
+                This Screen&apos;s Role
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setHostDisplayMode('table_display')}
+                  className={`flex items-start gap-3 rounded-2xl border p-3.5 text-left transition cursor-pointer ${
+                    hostDisplayMode === 'table_display'
+                      ? 'border-amber-400 bg-amber-400/15'
+                      : 'border-white/15 bg-black/25 hover:bg-black/35'
+                  }`}
+                >
+                  <div className="rounded-xl bg-amber-400/20 p-2 text-amber-300">
+                    <Tv className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white">
+                      Shared TV / Table Display
+                    </div>
+                    <div className="mt-0.5 text-xs text-emerald-100/75">
+                      Jackbox-style! Cast this tab to your TV; everyone plays privately on their phones.
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setHostDisplayMode('player')}
+                  className={`flex items-start gap-3 rounded-2xl border p-3.5 text-left transition cursor-pointer ${
+                    hostDisplayMode === 'player'
+                      ? 'border-amber-400 bg-amber-400/15'
+                      : 'border-white/15 bg-black/25 hover:bg-black/35'
+                  }`}
+                >
+                  <div className="rounded-xl bg-emerald-400/20 p-2 text-emerald-300">
+                    <Laptop className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white">
+                      Play on This Device
+                    </div>
+                    <div className="mt-0.5 text-xs text-emerald-100/75">
+                      Take Seat 1 on this laptop while others join on their own laptops or phones.
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {hostDisplayMode === 'player' && (
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-emerald-200/85">
+                  Your Name
+                </label>
+                <input
+                  type="text"
+                  value={hostName}
+                  onChange={(e) => setHostName(e.target.value)}
+                  maxLength={16}
+                  className="w-full max-w-xs rounded-xl border border-white/15 bg-black/35 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-amber-200/90">
+                Match Length
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {(
+                  [
+                    { id: 'standard_5000', label: 'Standard', sub: '5,000 pts' },
+                    { id: 'quick_2500', label: 'Quick', sub: '2,500 pts' },
+                    { id: 'single_hand', label: 'Single Hand', sub: '1 deal' },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setMatchLength(opt.id)}
+                    className={`rounded-xl border px-3 py-1.5 text-center transition cursor-pointer ${
+                      matchLength === opt.id
+                        ? 'border-amber-400 bg-amber-400/20 text-white'
+                        : 'border-white/15 bg-black/25 text-emerald-100/75 hover:bg-black/40'
+                    }`}
+                  >
+                    <div className="text-xs font-bold">{opt.label}</div>
+                    <div className="text-[11px] text-amber-200/80">{opt.sub}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setRulesOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200/25 bg-white/5 px-4 py-2.5 text-sm font-semibold text-emerald-100 hover:bg-white/10 cursor-pointer"
+              >
+                <BookOpen className="h-4 w-4 text-amber-300" />
+                Rules &amp; Scoring
+              </button>
+
+              <button
+                type="submit"
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-6 py-3 text-sm font-extrabold text-stone-950 shadow-lg transition hover:bg-amber-300 disabled:opacity-40 cursor-pointer"
+              >
+                <Wifi className="h-4 w-4" /> Create Room &amp; Show QR Code
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Join Existing LAN Room Form */}
+        {section === 'join_lan' && (
+          <form onSubmit={handleJoinSubmit} className="mt-5 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-amber-200/90">
+                  4-Letter Room Code
+                </label>
+                <input
+                  type="text"
+                  value={joinCode}
+                  onChange={(e) =>
+                    setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))
+                  }
+                  placeholder="e.g. K7QM"
+                  maxLength={4}
+                  required
+                  className="w-full rounded-xl border border-amber-300/40 bg-black/40 px-4 py-3 font-mono text-2xl font-black tracking-[0.25em] text-amber-200 uppercase focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-amber-200/90">
+                  Your Name
+                </label>
+                <input
+                  type="text"
+                  value={joinName}
+                  onChange={(e) => setJoinName(e.target.value)}
+                  placeholder="Enter your name"
+                  maxLength={16}
+                  required
+                  className="w-full rounded-xl border border-white/20 bg-black/40 px-4 py-3 text-base font-semibold text-white focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="submit"
+                disabled={busy || joinCode.trim().length < 4}
+                className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-emerald-400 px-6 py-3 text-sm font-extrabold text-stone-950 shadow-lg transition hover:bg-emerald-300 disabled:opacity-40 cursor-pointer"
+              >
+                <LogIn className="h-4 w-4" /> Join Table
+              </button>
+            </div>
+          </form>
+        )}
       </div>
 
       <RulesScoringDrawer
