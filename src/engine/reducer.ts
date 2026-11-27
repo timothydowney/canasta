@@ -456,7 +456,7 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         partner.id,
         'partner_prompt',
         action.allow
-          ? `${partner.name} answered YES — ${asker.name} is bound to go out this turn!`
+          ? `${partner.name} answered YES — ${asker.name === 'You' ? 'You are' : `${asker.name} is`} bound to go out this turn!`
           : `${partner.name} answered NO — ${asker.name} may not go out this turn.`,
       );
       return { ok: true, state: next };

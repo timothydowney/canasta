@@ -3,7 +3,9 @@ import { BookOpen, Calculator, X } from 'lucide-react';
 import {
   getCardPoints,
   getRequiredInitialMeldPoints,
+  getTeamById,
   type RulesetConfig,
+  type TeamId,
   type TeamState,
 } from '../../engine';
 
@@ -11,8 +13,8 @@ export interface RulesScoringDrawerProps {
   open: boolean;
   onClose: () => void;
   ruleset: RulesetConfig;
-  teams?: [TeamState, TeamState];
-  viewerTeamId?: 'team-0' | 'team-1';
+  teams?: TeamState[];
+  viewerTeamId?: TeamId;
   initialTab?: 'rules' | 'scoring';
 }
 
@@ -29,9 +31,7 @@ export const RulesScoringDrawer: React.FC<RulesScoringDrawerProps> = ({
   if (!open) return null;
 
   const viewerTeam =
-    teams && viewerTeamId
-      ? teams[viewerTeamId === 'team-0' ? 0 : 1]
-      : undefined;
+    teams && viewerTeamId ? getTeamById(teams, viewerTeamId) : undefined;
   const activeRequired = viewerTeam
     ? getRequiredInitialMeldPoints(ruleset, viewerTeam.cumulativeScore)
     : null;
@@ -222,6 +222,12 @@ export const RulesScoringDrawer: React.FC<RulesScoringDrawerProps> = ({
                   <li>
                     <strong className="text-white">Stock Exhaustion:</strong> If the last stock card drawn is a Red 3, the hand ends immediately. Otherwise play continues without a stock; you must take an unfrozen top discard if it matches your existing meld.
                   </li>
+                  {ruleset.allowPartnerGoOutPrompt && (
+                    <li>
+                      <strong className="text-white">Partner Permission (&ldquo;May I go out?&rdquo;):</strong>{' '}
+                      In 4-Player Partnership, you may optionally ask your partner before or after drawing. Their answer is strictly binding for that turn: <strong>Yes</strong> requires you to go out if legally possible; <strong>No</strong> forbids going out this turn.
+                    </li>
+                  )}
                 </ul>
               </section>
             </>
@@ -319,42 +325,44 @@ export const RulesScoringDrawer: React.FC<RulesScoringDrawerProps> = ({
                   </div>
 
                   {teams[0].handHistory.length > 0 && (
-                    <div className="overflow-hidden rounded-xl border border-emerald-200/15">
+                    <div className="overflow-x-auto rounded-xl border border-emerald-200/15">
                       <table className="w-full text-left text-xs">
                         <thead className="bg-black/35 text-emerald-200/80">
                           <tr>
                             <th className="px-3 py-2">Hand</th>
-                            <th className="px-3 py-2 text-right">{teams[0].name}</th>
-                            <th className="px-3 py-2 text-right">{teams[1].name}</th>
+                            {teams.map((t) => (
+                              <th key={t.id} className="px-3 py-2 text-right">
+                                {t.name}
+                              </th>
+                            ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5 bg-black/15">
-                          {teams[0].handHistory.map((h0, idx) => {
-                            const h1 = teams[1].handHistory[idx];
-                            return (
-                              <tr key={h0.handNumber}>
-                                <td className="px-3 py-2 font-medium">#{h0.handNumber}</td>
-                                <td className="px-3 py-2 text-right">
-                                  <span className={h0.handNetScore >= 0 ? 'text-emerald-300' : 'text-rose-300'}>
-                                    {h0.handNetScore >= 0 ? '+' : ''}
-                                    {h0.handNetScore}
-                                  </span>{' '}
-                                  <span className="text-emerald-200/50">
-                                    ({h0.cumulativeAfterHand})
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2 text-right">
-                                  <span className={h1.handNetScore >= 0 ? 'text-emerald-300' : 'text-rose-300'}>
-                                    {h1.handNetScore >= 0 ? '+' : ''}
-                                    {h1.handNetScore}
-                                  </span>{' '}
-                                  <span className="text-emerald-200/50">
-                                    ({h1.cumulativeAfterHand})
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
+                          {teams[0].handHistory.map((h0, idx) => (
+                            <tr key={h0.handNumber}>
+                              <td className="px-3 py-2 font-medium">#{h0.handNumber}</td>
+                              {teams.map((t) => {
+                                const h = t.handHistory[idx];
+                                return (
+                                  <td key={t.id} className="px-3 py-2 text-right">
+                                    <span
+                                      className={
+                                        h.handNetScore >= 0
+                                          ? 'text-emerald-300'
+                                          : 'text-rose-300'
+                                      }
+                                    >
+                                      {h.handNetScore >= 0 ? '+' : ''}
+                                      {h.handNetScore}
+                                    </span>{' '}
+                                    <span className="text-emerald-200/50">
+                                      ({h.cumulativeAfterHand})
+                                    </span>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
