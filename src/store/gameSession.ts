@@ -23,6 +23,7 @@ import {
   type SavedSession,
 } from './persistence';
 import { buildTurnRecap } from './privacyCurtain';
+import { soundEngine } from '../ui/audio/soundEngine';
 
 export interface NewMatchRequest {
   mode: GameMode;
@@ -52,6 +53,9 @@ export function useCanastaSession() {
   const [state, setState] = useState<GameState | null>(null);
   const [mode, setMode] = useState<GameMode>('solo_bot');
   const [botSpeed, setBotSpeed] = useState<BotSpeed>('normal');
+  const [soundMuted, setSoundMuted] = useState<boolean>(() =>
+    soundEngine.isMuted(),
+  );
   const [toast, setToast] = useState<ToastNotice | null>(null);
   const [curtain, setCurtain] = useState<PrivacyCurtainState>({
     open: false,
@@ -144,6 +148,7 @@ export function useCanastaSession() {
       setMode(req.mode);
       setState(created);
       persistIfActive(created, req.mode, botSpeed);
+      soundEngine.playDeal();
 
       if (req.mode === 'pass_and_play') {
         const firstPlayer = created.players[created.activePlayerIndex];
@@ -202,6 +207,7 @@ export function useCanastaSession() {
 
       const res = applyAction(state, action);
       if (!res.ok) {
+        soundEngine.playError();
         showToast('error', res.error);
         return false;
       }
@@ -210,9 +216,39 @@ export function useCanastaSession() {
       setState(next);
       persistIfActive(next, mode, botSpeed);
 
-      // Surface any newly emitted Red 3 exposure messages as a clear toast
+      // Play synchronized table sound effects for both human and computer actions
+      const prevCanastas =
+        state.teams[0].melds.filter((m) => m.isCanasta).length +
+        state.teams[1].melds.filter((m) => m.isCanasta).length;
+      const nextCanastas =
+        next.teams[0].melds.filter((m) => m.isCanasta).length +
+        next.teams[1].melds.filter((m) => m.isCanasta).length;
       const newLogs = next.actionLog.slice(prevLogLen);
       const redThreeLog = newLogs.find((l) => l.kind === 'red_three');
+
+      if (next.phase === 'HAND_OVER' || next.phase === 'MATCH_OVER') {
+        soundEngine.playHandEnd();
+      } else if (action.type === 'START_NEXT_HAND') {
+        soundEngine.playDeal();
+      } else if (nextCanastas > prevCanastas) {
+        soundEngine.playCanasta();
+      } else if (action.type === 'TAKE_DISCARD_PILE') {
+        soundEngine.playTakePile();
+      } else if (action.type === 'COMMIT_MELDS') {
+        soundEngine.playMeld();
+      } else if (action.type === 'UNDO_TURN_MELDS') {
+        soundEngine.playUndo();
+      } else if (action.type === 'DISCARD') {
+        const frozeNow =
+          !state.discardPile.frozenByWildOrInitial &&
+          next.discardPile.frozenByWildOrInitial;
+        soundEngine.playDiscard(frozeNow);
+      } else if (action.type === 'DRAW_STOCK') {
+        if (redThreeLog) soundEngine.playRedThree();
+        else soundEngine.playDraw();
+      }
+
+      // Surface any newly emitted Red 3 exposure messages as a clear toast
       if (redThreeLog) {
         showToast('red_three', redThreeLog.message);
       }
@@ -323,12 +359,23 @@ export function useCanastaSession() {
     [mode, persistIfActive, state],
   );
 
+  const toggleSoundMuted = useCallback(() => {
+    const next = !soundEngine.isMuted();
+    soundEngine.setMuted(next);
+    setSoundMuted(next);
+    if (!next) {
+      soundEngine.playUiClick();
+    }
+  }, []);
+
   return {
     state,
     view,
     mode,
     botSpeed,
     setBotSpeed: updateBotSpeed,
+    soundMuted,
+    toggleSoundMuted,
     savedSummary,
     toast,
     dismissToast: () => setToast(null),

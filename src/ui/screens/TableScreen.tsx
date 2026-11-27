@@ -6,8 +6,11 @@ import {
   Gauge,
   Home,
   Sparkles,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
+import { soundEngine } from '../audio/soundEngine';
 import {
   getCardLabel,
   getCardPoints,
@@ -47,6 +50,8 @@ export interface TableScreenProps {
   mode: GameMode;
   botSpeed: BotSpeed;
   onChangeBotSpeed: (speed: BotSpeed) => void;
+  soundMuted: boolean;
+  onToggleSound: () => void;
   toast: ToastNotice | null;
   onDismissToast: () => void;
   curtain: PrivacyCurtainState;
@@ -62,6 +67,8 @@ export const TableScreen: React.FC<TableScreenProps> = ({
   mode,
   botSpeed,
   onChangeBotSpeed,
+  soundMuted,
+  onToggleSound,
   toast,
   onDismissToast,
   curtain,
@@ -117,8 +124,10 @@ export const TableScreen: React.FC<TableScreenProps> = ({
   const toggleCardSelection = (cardId: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(cardId)) next.delete(cardId);
-      else next.add(cardId);
+      const willSelect = !next.has(cardId);
+      if (willSelect) next.add(cardId);
+      else next.delete(cardId);
+      soundEngine.playCardClick(willSelect);
       return next;
     });
   };
@@ -480,7 +489,23 @@ export const TableScreen: React.FC<TableScreenProps> = ({
 
           <button
             type="button"
-            onClick={() => setRulesDrawerOpen(true)}
+            onClick={onToggleSound}
+            title={soundMuted ? 'Unmute sound effects' : 'Mute sound effects'}
+            className="rounded-lg border border-white/15 bg-white/5 p-1.5 text-emerald-100 hover:bg-white/10 cursor-pointer"
+          >
+            {soundMuted ? (
+              <VolumeX className="h-3.5 w-3.5 text-rose-300" />
+            ) : (
+              <Volume2 className="h-3.5 w-3.5 text-amber-300" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.playUiClick();
+              setRulesDrawerOpen(true);
+            }}
             className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/35 bg-amber-400/15 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-400/25 cursor-pointer"
           >
             <BookOpen className="h-3.5 w-3.5" />

@@ -24,6 +24,8 @@ export const App: React.FC = () => {
       mode={session.mode}
       botSpeed={session.botSpeed}
       onChangeBotSpeed={session.setBotSpeed}
+      soundMuted={session.soundMuted}
+      onToggleSound={session.toggleSoundMuted}
       toast={session.toast}
       onDismissToast={session.dismissToast}
       curtain={session.curtain}
