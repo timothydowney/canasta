@@ -537,23 +537,27 @@ export const TableScreen: React.FC<TableScreenProps> = ({
         </div>
       </header>
 
-      {/* Transient Toast Banner */}
+      {/* Floating Announcement Popup (always visible right above your hand regardless of scroll) */}
       {toast && (
-        <div className="pointer-events-none fixed top-14 left-1/2 z-40 -translate-x-1/2 px-4">
+        <div
+          key={toast.id}
+          className="toast-float-in pointer-events-none fixed bottom-36 sm:bottom-44 left-1/2 z-40 w-max max-w-[92vw] px-2"
+        >
           <div
-            className={`pointer-events-auto flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-bold shadow-xl backdrop-blur-md ${
+            className={`pointer-events-auto flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 text-xs sm:text-sm font-bold shadow-[0_12px_32px_rgba(0,0,0,0.6)] backdrop-blur-md ${
               toast.kind === 'error'
-                ? 'border-rose-400/60 bg-rose-950/90 text-rose-100'
+                ? 'border-rose-400/75 bg-rose-950/95 text-rose-100'
                 : toast.kind === 'red_three'
-                  ? 'border-rose-300/60 bg-rose-900/90 text-amber-100'
-                  : 'border-amber-300/50 bg-stone-950/90 text-amber-200'
+                  ? 'border-rose-300/75 bg-rose-900/95 text-amber-100'
+                  : 'border-amber-300/70 bg-[#10261b]/95 text-amber-200'
             }`}
           >
-            <span>{toast.message}</span>
+            <span className="leading-snug">{toast.message}</span>
             <button
               type="button"
               onClick={onDismissToast}
-              className="rounded-full p-0.5 hover:bg-white/15 cursor-pointer"
+              aria-label="Dismiss announcement"
+              className="shrink-0 rounded-full p-1 hover:bg-white/15 cursor-pointer"
             >
               <X className="h-3.5 w-3.5" />
             </button>

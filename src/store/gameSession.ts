@@ -250,9 +250,31 @@ export function useCanastaSession() {
         else soundEngine.playDraw();
       }
 
-      // Surface any newly emitted Red 3 exposure messages as a clear toast
+      // Surface key table announcements in the floating popup right above the hand
+      const actorIsBot = prevActive.kind === 'bot';
       if (redThreeLog) {
         showToast('red_three', redThreeLog.message);
+      } else if (nextCanastas > prevCanastas) {
+        const meldLog = newLogs.find((l) => l.kind === 'meld' || l.kind === 'take_pile');
+        if (meldLog) showToast('info', meldLog.message);
+      } else if (actorIsBot && action.type === 'TAKE_DISCARD_PILE') {
+        const takeLog = newLogs.find((l) => l.kind === 'take_pile');
+        if (takeLog) showToast('info', takeLog.message);
+      } else if (
+        actorIsBot &&
+        action.type === 'DISCARD' &&
+        (!state.discardPile.frozenByWildOrInitial &&
+          next.discardPile.frozenByWildOrInitial)
+      ) {
+        const discLog = newLogs.find((l) => l.kind === 'discard');
+        if (discLog) showToast('info', discLog.message);
+      } else if (
+        actorIsBot &&
+        action.type === 'COMMIT_MELDS' &&
+        !state.teams[prevActive.teamId === 'team-0' ? 0 : 1].hasMadeInitialMeld
+      ) {
+        const meldLog = newLogs.find((l) => l.kind === 'meld');
+        if (meldLog) showToast('info', meldLog.message);
       }
 
       // Pass-and-Play privacy curtain when active human changes

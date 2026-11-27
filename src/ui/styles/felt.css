@@ -48,3 +48,18 @@
 .card-new-animate {
   animation: card-pop-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
+
+@keyframes toast-float-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 10px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.toast-float-in {
+  animation: toast-float-in 200ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}

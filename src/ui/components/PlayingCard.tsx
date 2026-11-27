@@ -82,11 +82,6 @@ export const PlayingCard: React.FC<PlayingCardProps> = ({
           dimmed ? 'brightness-[0.78] saturate-[0.75]' : ''
         }`}
       />
-      {isNew && !faceDown && (
-        <span className="pointer-events-none absolute top-1 left-1 rounded bg-emerald-400/95 px-1 py-[1px] text-[8px] font-black uppercase tracking-wider text-stone-950 shadow">
-          New
-        </span>
-      )}
       {showWildBadge && isWild && (
         <span className="pointer-events-none absolute top-1 right-1 rounded bg-amber-400/95 px-1 py-[1px] text-[8px] font-black uppercase tracking-wider text-stone-950 shadow">
           Wild
