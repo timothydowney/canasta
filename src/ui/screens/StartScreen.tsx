@@ -196,19 +196,26 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                 <label className="mb-1 block text-xs font-semibold text-emerald-200/85">
                   Computer Difficulty
                 </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['easy', 'normal'] as const).map((diff) => (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(
+                    [
+                      { id: 'easy', label: 'Easy', sub: 'Casual' },
+                      { id: 'normal', label: 'Normal', sub: 'Balanced' },
+                      { id: 'hard', label: 'Hard', sub: 'Patient' },
+                    ] as const
+                  ).map((diff) => (
                     <button
-                      key={diff}
+                      key={diff.id}
                       type="button"
-                      onClick={() => setBotDifficulty(diff)}
-                      className={`rounded-xl border py-2 text-xs font-bold capitalize transition cursor-pointer ${
-                        botDifficulty === diff
+                      onClick={() => setBotDifficulty(diff.id)}
+                      className={`rounded-xl border py-1.5 px-1 text-center transition cursor-pointer ${
+                        botDifficulty === diff.id
                           ? 'border-amber-400 bg-amber-400/20 text-amber-200'
                           : 'border-white/15 bg-black/30 text-emerald-100/75 hover:bg-black/45'
                       }`}
                     >
-                      {diff}
+                      <div className="text-xs font-bold">{diff.label}</div>
+                      <div className="text-[10px] opacity-75">{diff.sub}</div>
                     </button>
                   ))}
                 </div>

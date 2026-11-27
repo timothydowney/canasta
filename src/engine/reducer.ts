@@ -494,11 +494,27 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
       next = recordAction(next, action);
 
       const totalTaken = state.discardPile.cards.length;
+      const wasFrozen =
+        state.discardPile.frozenByWildOrInitial || !state.teams[teamIdx].hasMadeInitialMeld;
+      let takeReason: string;
+      if (action.topCardUsage.kind === 'add_to_meld') {
+        takeReason = `by adding ${getCardLabel(topCard)} to existing ${topCard.rank}s meld`;
+      } else {
+        const usedHand = active.hand.filter((c) =>
+          action.topCardUsage.kind === 'new_meld' &&
+          action.topCardUsage.handCardIds.includes(c.id),
+        );
+        const usedWild = usedHand.some((c) => isWildCard(c));
+        takeReason = usedWild
+          ? `by melding ${getCardLabel(topCard)} with a matching card + wild from hand`
+          : `by melding ${getCardLabel(topCard)} with a natural pair from hand`;
+      }
+      const initialTag = !state.teams[teamIdx].hasMadeInitialMeld ? ' [Initial Meld]' : '';
       next = appendLog(
         next,
         active.id,
         'take_pile',
-        `${active.name} took the discard pile (${totalTaken} card${totalTaken === 1 ? '' : 's'}) using ${getCardLabel(topCard)}.`,
+        `${active.name} took the ${wasFrozen ? 'frozen ' : 'unfrozen '}discard pile (${totalTaken} card${totalTaken === 1 ? '' : 's'}) ${takeReason}${initialTag}.`,
       );
 
       if (buriedRedThrees.length > 0) {
@@ -567,16 +583,34 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
       };
       next = recordAction(next, action);
 
-      const summaryParts = action.submissions.map((s) =>
-        s.kind === 'new_meld'
-          ? `${s.cardIds.length}×${s.rank === '3B' ? 'Black 3' : s.rank}`
-          : `+${s.cardIds.length} to meld`,
-      );
+      const prevMeldsById = new Map(state.teams[teamIdx].melds.map((m) => [m.id, m]));
+      const summaryParts = action.submissions.map((s) => {
+        if (s.kind === 'new_meld') {
+          return `${s.cardIds.length}×${s.rank === '3B' ? 'Black 3' : s.rank}`;
+        }
+        const target = prevMeldsById.get(s.meldId);
+        return `+${s.cardIds.length} to ${target ? `${target.rank}s` : 'meld'}`;
+      });
+      const newlyCompletedCanastas = assigned.melds.filter((m) => {
+        if (!m.isCanasta) return false;
+        const prev = prevMeldsById.get(m.id);
+        return !prev || !prev.isCanasta;
+      });
+      const canastaNote =
+        newlyCompletedCanastas.length > 0
+          ? ` — completed ${newlyCompletedCanastas
+              .map(
+                (m) =>
+                  `${m.canastaType === 'natural' ? 'Natural (+500)' : 'Mixed (+300)'} ${m.rank}s Canasta`,
+              )
+              .join(' & ')}!`
+          : '';
+      const initialNote = !state.teams[teamIdx].hasMadeInitialMeld ? ' [Initial Meld]' : '';
       next = appendLog(
         next,
         active.id,
         'meld',
-        `${active.name} melded ${summaryParts.join(', ')} (${check.meldPoints} pts).`,
+        `${active.name} melded ${summaryParts.join(', ')} (${check.meldPoints} pts)${initialNote}${canastaNote}.`,
       );
 
       // If hand reached 0 cards cleanly, player went out without needing a discard!

@@ -123,7 +123,9 @@ export function useCanastaSession() {
         req.mode === 'solo_bot'
           ? req.botDifficulty === 'easy'
             ? 'Computer (Easy)'
-            : 'Computer'
+            : req.botDifficulty === 'hard'
+              ? 'Computer (Hard)'
+              : 'Computer (Normal)'
           : req.player2Name.trim() || 'Player 2';
 
       const players: PlayerConfig[] = [

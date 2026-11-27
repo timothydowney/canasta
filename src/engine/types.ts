@@ -122,7 +122,7 @@ export interface TeamState {
   handHistory: HandScoreBreakdown[];
 }
 
-export type BotDifficulty = 'easy' | 'normal';
+export type BotDifficulty = 'easy' | 'normal' | 'hard';
 
 export interface PlayerConfig {
   id: string;
