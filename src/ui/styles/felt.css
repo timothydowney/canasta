@@ -28,3 +28,23 @@
     0 0 0 2.5px #fbbf24,
     0 0 16px rgba(251, 191, 36, 0.45);
 }
+
+.card-new-shadow {
+  box-shadow:
+    0 6px 14px rgba(0, 0, 0, 0.48),
+    0 0 0 2px #34d399,
+    0 0 14px rgba(52, 211, 153, 0.5);
+}
+
+@keyframes card-pop-in {
+  0% {
+    transform: translateY(-14px) scale(1.04);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+.card-new-animate {
+  animation: card-pop-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}

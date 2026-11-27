@@ -69,6 +69,10 @@ export function getPlayerView(state: GameState, viewerPlayerId: string): PlayerV
     viewerId: viewer.id,
     viewerTeamId: viewer.teamId,
     viewerHand: viewer.hand.slice(),
+    newlyAcquiredCardIds:
+      isViewerTurn && state.phase === 'MELD_OR_DISCARD'
+        ? (state.lastDrawnCardIds ?? []).slice()
+        : [],
     activePlayerId: activePlayer.id,
     players: buildPublicPlayers(state),
     teams: [

@@ -19,6 +19,7 @@ export interface PlayingCardProps {
   rotated?: boolean;
   dimmed?: boolean;
   highlight?: boolean;
+  isNew?: boolean;
   showWildBadge?: boolean;
   onClick?: () => void;
   className?: string;
@@ -34,6 +35,7 @@ export const PlayingCard: React.FC<PlayingCardProps> = ({
   rotated = false,
   dimmed = false,
   highlight = false,
+  isNew = false,
   showWildBadge = false,
   onClick,
   className = '',
@@ -53,7 +55,11 @@ export const PlayingCard: React.FC<PlayingCardProps> = ({
   const classes = [
     'relative shrink-0 select-none rounded-md bg-white p-[1.5px] transition-all duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300',
     SIZE_CLASSES[size],
-    selected ? '-translate-y-3.5 card-selected-shadow z-30' : 'card-shadow',
+    selected
+      ? '-translate-y-3.5 card-selected-shadow z-30'
+      : isNew
+        ? '-translate-y-1.5 card-new-shadow card-new-animate'
+        : 'card-shadow',
     interactive && !dimmed && !selected
       ? 'cursor-pointer hover:-translate-y-2 hover:z-20'
       : interactive
@@ -76,6 +82,11 @@ export const PlayingCard: React.FC<PlayingCardProps> = ({
           dimmed ? 'brightness-[0.78] saturate-[0.75]' : ''
         }`}
       />
+      {isNew && !faceDown && (
+        <span className="pointer-events-none absolute top-1 left-1 rounded bg-emerald-400/95 px-1 py-[1px] text-[8px] font-black uppercase tracking-wider text-stone-950 shadow">
+          New
+        </span>
+      )}
       {showWildBadge && isWild && (
         <span className="pointer-events-none absolute top-1 right-1 rounded bg-amber-400/95 px-1 py-[1px] text-[8px] font-black uppercase tracking-wider text-stone-950 shadow">
           Wild

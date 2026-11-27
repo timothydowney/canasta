@@ -422,6 +422,11 @@ export const TableScreen: React.FC<TableScreenProps> = ({
   const possessive = (name: string) =>
     name === 'You' ? 'Your' : name.endsWith('s') ? `${name}'` : `${name}'s`;
 
+  const newCardIds = useMemo(
+    () => new Set(view.newlyAcquiredCardIds),
+    [view.newlyAcquiredCardIds],
+  );
+
   // Hide hand contents completely while Pass-and-Play privacy curtain is mounted
   const handHidden = curtain.open;
   const oppBackCount = Math.min(oppPlayer.handCount, 12);
@@ -692,6 +697,7 @@ export const TableScreen: React.FC<TableScreenProps> = ({
               cards={view.viewerHand}
               selectedIds={selectedIds}
               stagedIds={stagedCardIds}
+              newCardIds={newCardIds}
               dimmedIds={dimmedIds}
               disabled={
                 !view.legalHints.isViewerTurn ||

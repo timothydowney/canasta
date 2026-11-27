@@ -217,6 +217,8 @@ export interface GameState {
   tookDiscardPileThisTurn: boolean;
   /** True if the active player already melded/added cards earlier in THIS turn */
   meldedThisTurn: boolean;
+  /** Card IDs newly added to the active player's hand this turn (from stock draw or discard pickup) */
+  lastDrawnCardIds: string[];
   turnUndoCheckpoint: TurnUndoCheckpoint | null;
   actionHistory: GameAction[];
   actionLog: ActionLogEntry[];
@@ -273,6 +275,8 @@ export interface PlayerView {
   viewerId: string;
   viewerTeamId: 'team-0' | 'team-1';
   viewerHand: Card[];
+  /** Card IDs in viewerHand that were just drawn from stock or picked up from discard this turn */
+  newlyAcquiredCardIds: string[];
   activePlayerId: string;
   players: PublicPlayerView[];
   teams: [TeamState, TeamState];

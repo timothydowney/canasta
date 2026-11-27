@@ -92,7 +92,12 @@ function drawCardsWithRedThreeReplacement(
   state: GameState,
   playerIndex: number,
   count: number,
-): { state: GameState; drawnCount: number; endedByLastRedThree: boolean } {
+): {
+  state: GameState;
+  drawnCount: number;
+  drawnCardIds: string[];
+  endedByLastRedThree: boolean;
+} {
   let stock = state.stock.slice();
   const players = state.players.map((p, idx) =>
     idx === playerIndex ? { ...p, hand: p.hand.slice() } : p,
@@ -104,6 +109,7 @@ function drawCardsWithRedThreeReplacement(
 
   let remainingToDraw = count;
   let drawnNonRed3 = 0;
+  const drawnCardIds: string[] = [];
 
   while (remainingToDraw > 0 && stock.length > 0) {
     const card = stock.pop()!;
@@ -125,11 +131,17 @@ function drawCardsWithRedThreeReplacement(
           : `${player.name} exposed ${getCardLabel(card)} and drew a replacement.`,
       );
       if (isLastStockCard) {
-        return { state: nextState, drawnCount: drawnNonRed3, endedByLastRedThree: true };
+        return {
+          state: nextState,
+          drawnCount: drawnNonRed3,
+          drawnCardIds,
+          endedByLastRedThree: true,
+        };
       }
       // Keep remainingToDraw unchanged so a replacement card is drawn
     } else {
       player.hand.push(card);
+      drawnCardIds.push(card.id);
       drawnNonRed3++;
       remainingToDraw--;
     }
@@ -142,7 +154,12 @@ function drawCardsWithRedThreeReplacement(
     players,
     teams,
   };
-  return { state: nextState, drawnCount: drawnNonRed3, endedByLastRedThree: false };
+  return {
+    state: nextState,
+    drawnCount: drawnNonRed3,
+    drawnCardIds,
+    endedByLastRedThree: false,
+  };
 }
 
 /**
@@ -204,6 +221,7 @@ function dealHand(
     | 'turnNumber'
     | 'tookDiscardPileThisTurn'
     | 'meldedThisTurn'
+    | 'lastDrawnCardIds'
     | 'turnUndoCheckpoint'
     | 'actionHistory'
     | 'lastHandSummary'
@@ -288,6 +306,7 @@ function dealHand(
     discardPile,
     tookDiscardPileThisTurn: false,
     meldedThisTurn: false,
+    lastDrawnCardIds: [],
     turnUndoCheckpoint: null,
     actionHistory: [],
     lastHandSummary: null,
@@ -439,6 +458,7 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         phase: 'MELD_OR_DISCARD',
         tookDiscardPileThisTurn: false,
         meldedThisTurn: false,
+        lastDrawnCardIds: drawResult.drawnCardIds,
         turnUndoCheckpoint: {
           playerId: activeAfter.id,
           hand: activeAfter.hand.slice(),
@@ -489,6 +509,7 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         phase: 'MELD_OR_DISCARD',
         tookDiscardPileThisTurn: true,
         meldedThisTurn: true,
+        lastDrawnCardIds: buriedHandCards.map((c) => c.id),
         nextMeldSeq: assigned.nextMeldSeq,
       };
       next = recordAction(next, action);
@@ -759,6 +780,7 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         turnNumber: state.turnNumber + 1,
         tookDiscardPileThisTurn: false,
         meldedThisTurn: false,
+        lastDrawnCardIds: [],
       };
 
       return { ok: true, state: prepareTurnStart(next) };

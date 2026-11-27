@@ -530,6 +530,9 @@ describe('Going Out, Black 3 Melds, Concealed Going Out, Undo & Replay', () => {
     expect(d1.ok).toBe(true);
     if (!d1.ok) return;
     const drawnHandIds = d1.state.players[d1.state.activePlayerIndex].hand.map((c) => c.id);
+    const viewAfterDraw = getPlayerView(d1.state, activeId);
+    expect(viewAfterDraw.newlyAcquiredCardIds).toHaveLength(2);
+    expect(getPlayerView(d1.state, otherId).newlyAcquiredCardIds).toHaveLength(0);
 
     // Discard lowest card
     const discardCard = d1.state.players[d1.state.activePlayerIndex].hand[0];
