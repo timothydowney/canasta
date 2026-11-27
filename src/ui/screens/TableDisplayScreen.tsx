@@ -4,12 +4,15 @@ import {
   Bot,
   Gauge,
   LogOut,
+  Maximize2,
+  Minimize2,
   Sparkles,
   Volume2,
   VolumeX,
   Wifi,
   X,
 } from 'lucide-react';
+import { useFullscreen } from '../hooks/useFullscreen';
 import type { GameAction, TableView } from '../../engine';
 import type { RoomLobbyState } from '../../shared/protocol';
 import type { BotSpeed, ToastNotice } from '../../store';
@@ -52,6 +55,7 @@ export const TableDisplayScreen: React.FC<TableDisplayScreenProps> = ({
   onLeaveRoom,
 }) => {
   const [rulesOpen, setRulesOpen] = useState(false);
+  const fullscreen = useFullscreen();
 
   const activePlayer = view.players.find((p) => p.id === view.activePlayerId);
   const phaseLabel =
@@ -116,6 +120,20 @@ export const TableDisplayScreen: React.FC<TableDisplayScreenProps> = ({
             >
               <Gauge className="h-3.5 w-3.5 text-amber-300" />
               <span className="capitalize">{lobby.botSpeed}</span>
+            </button>
+          )}
+          {fullscreen.isSupported && (
+            <button
+              type="button"
+              onClick={() => void fullscreen.toggleFullscreen()}
+              className="rounded-lg border border-white/15 bg-white/5 p-2 text-emerald-100 hover:bg-white/10 cursor-pointer"
+              title={fullscreen.isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+            >
+              {fullscreen.isFullscreen ? (
+                <Minimize2 className="h-4 w-4 text-amber-300" />
+              ) : (
+                <Maximize2 className="h-4 w-4 text-amber-300" />
+              )}
             </button>
           )}
           <button
