@@ -1,0 +1,30 @@
+.casino-felt {
+  background-color: #0d4a2b;
+  background-image:
+    radial-gradient(ellipse at 50% 42%, rgba(28, 128, 74, 0.72) 0%, rgba(13, 74, 43, 0.92) 58%, rgba(6, 39, 22, 1) 100%),
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.015) 0px,
+      rgba(255, 255, 255, 0.015) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+}
+
+.felt-rail {
+  background: linear-gradient(180deg, #2c1a11 0%, #1c100a 100%);
+  border-color: rgba(217, 171, 88, 0.35);
+}
+
+.card-shadow {
+  box-shadow:
+    0 4px 10px rgba(0, 0, 0, 0.42),
+    0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.card-selected-shadow {
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.55),
+    0 0 0 2.5px #fbbf24,
+    0 0 16px rgba(251, 191, 36, 0.45);
+}
