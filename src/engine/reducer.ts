@@ -21,11 +21,15 @@ import type {
   PlayerConfig,
   PlayerState,
   RulesetConfig,
+  TeamId,
   TeamState,
 } from './types';
 import {
+  canPlayerGoOutNow,
   countTeamCanastas,
+  getPartnerPlayerId,
   getTeamById,
+  getTeamIndex,
   isMandatoryStockExhaustedTake,
   validateCommitMeldsAction,
   validateTakeDiscardPileAction,
@@ -36,28 +40,18 @@ export interface CreateMatchOptions {
   seed?: number;
   ruleset?: RulesetConfig;
   players: PlayerConfig[];
-  teamNames?: [string, string];
+  teamNames?: string[];
 }
 
-function cloneTeams(teams: readonly [TeamState, TeamState]): [TeamState, TeamState] {
-  return [
-    {
-      ...teams[0],
-      playerIds: teams[0].playerIds.slice(),
-      melds: teams[0].melds.map((m) => ({ ...m, cards: m.cards.slice() })),
-      redThrees: teams[0].redThrees.slice(),
-      meldedOnPriorTurnPlayerIds: teams[0].meldedOnPriorTurnPlayerIds.slice(),
-      handHistory: teams[0].handHistory.slice(),
-    },
-    {
-      ...teams[1],
-      playerIds: teams[1].playerIds.slice(),
-      melds: teams[1].melds.map((m) => ({ ...m, cards: m.cards.slice() })),
-      redThrees: teams[1].redThrees.slice(),
-      meldedOnPriorTurnPlayerIds: teams[1].meldedOnPriorTurnPlayerIds.slice(),
-      handHistory: teams[1].handHistory.slice(),
-    },
-  ];
+function cloneTeams(teams: readonly TeamState[]): TeamState[] {
+  return teams.map((t) => ({
+    ...t,
+    playerIds: t.playerIds.slice(),
+    melds: t.melds.map((m) => ({ ...m, cards: m.cards.slice() })),
+    redThrees: t.redThrees.slice(),
+    meldedOnPriorTurnPlayerIds: t.meldedOnPriorTurnPlayerIds.slice(),
+    handHistory: t.handHistory.slice(),
+  }));
 }
 
 function appendLog(
@@ -98,13 +92,13 @@ function drawCardsWithRedThreeReplacement(
   drawnCardIds: string[];
   endedByLastRedThree: boolean;
 } {
-  let stock = state.stock.slice();
+  const stock = state.stock.slice();
   const players = state.players.map((p, idx) =>
     idx === playerIndex ? { ...p, hand: p.hand.slice() } : p,
   );
   const teams = cloneTeams(state.teams);
   const player = players[playerIndex];
-  const teamIdx = player.teamId === 'team-0' ? 0 : 1;
+  const teamIdx = getTeamIndex(teams, player.teamId);
   let nextState: GameState = { ...state, stock, players, teams };
 
   let remainingToDraw = count;
@@ -138,7 +132,6 @@ function drawCardsWithRedThreeReplacement(
           endedByLastRedThree: true,
         };
       }
-      // Keep remainingToDraw unchanged so a replacement card is drawn
     } else {
       player.hand.push(card);
       drawnCardIds.push(card.id);
@@ -188,7 +181,7 @@ function prepareTurnStart(state: GameState): GameState {
   }
 
   const teams = cloneTeams(state.teams);
-  const teamIdx = activePlayer.teamId === 'team-0' ? 0 : 1;
+  const teamIdx = getTeamIndex(teams, activePlayer.teamId);
   teams[teamIdx].redThrees.push(...startingRedThrees);
 
   let nextState: GameState = { ...state, players, teams };
@@ -222,6 +215,7 @@ function dealHand(
     | 'tookDiscardPileThisTurn'
     | 'meldedThisTurn'
     | 'lastDrawnCardIds'
+    | 'partnerGoOut'
     | 'turnUndoCheckpoint'
     | 'actionHistory'
     | 'lastHandSummary'
@@ -237,7 +231,6 @@ function dealHand(
     hasTakenFirstTurn: false,
   }));
 
-  // Deal round-robin starting left of dealer
   const playerCount = players.length;
   for (let c = 0; c < baseState.ruleset.dealSize; c++) {
     for (let offset = 1; offset <= playerCount; offset++) {
@@ -249,7 +242,6 @@ function dealHand(
     p.hand = sortHandCards(p.hand);
   }
 
-  // Turn up initial discard card; keep turning if Wild or 3
   const discardCards: Card[] = [];
   let frozenByWildOrInitial = false;
   let frozenCardId: string | null = null;
@@ -275,22 +267,13 @@ function dealHand(
     blockedByBlackThree: false,
   };
 
-  const teams: [TeamState, TeamState] = [
-    {
-      ...baseState.teams[0],
-      melds: [],
-      redThrees: [],
-      hasMadeInitialMeld: false,
-      meldedOnPriorTurnPlayerIds: [],
-    },
-    {
-      ...baseState.teams[1],
-      melds: [],
-      redThrees: [],
-      hasMadeInitialMeld: false,
-      meldedOnPriorTurnPlayerIds: [],
-    },
-  ];
+  const teams: TeamState[] = baseState.teams.map((t) => ({
+    ...t,
+    melds: [],
+    redThrees: [],
+    hasMadeInitialMeld: false,
+    meldedOnPriorTurnPlayerIds: [],
+  }));
 
   const firstPlayerIndex = (baseState.dealerIndex + 1) % playerCount;
 
@@ -307,6 +290,7 @@ function dealHand(
     tookDiscardPileThisTurn: false,
     meldedThisTurn: false,
     lastDrawnCardIds: [],
+    partnerGoOut: null,
     turnUndoCheckpoint: null,
     actionHistory: [],
     lastHandSummary: null,
@@ -322,6 +306,13 @@ function dealHand(
 
   return prepareTurnStart(state);
 }
+
+const ORDERED_TEAM_IDS: readonly TeamId[] = [
+  'team-0',
+  'team-1',
+  'team-2',
+  'team-3',
+];
 
 export function createMatch(options: CreateMatchOptions): GameState {
   const ruleset = options.ruleset ?? BICYCLE_2P_CLASSIC;
@@ -340,45 +331,30 @@ export function createMatch(options: CreateMatchOptions): GameState {
     hasTakenFirstTurn: false,
   }));
 
-  const t0Players = players.filter((p) => p.teamId === 'team-0').map((p) => p.id);
-  const t1Players = players.filter((p) => p.teamId === 'team-1').map((p) => p.id);
-
-  const teamNames: [string, string] = options.teamNames ?? [
-    t0Players.length === 1
-      ? players.find((p) => p.id === t0Players[0])!.name
-      : 'Team 1',
-    t1Players.length === 1
-      ? players.find((p) => p.id === t1Players[0])!.name
-      : 'Team 2',
-  ];
-
-  const teams: [TeamState, TeamState] = [
-    {
-      id: 'team-0',
-      name: teamNames[0],
-      playerIds: t0Players,
+  const teamIds = ORDERED_TEAM_IDS.slice(0, ruleset.teamCount);
+  const teams: TeamState[] = teamIds.map((teamId, idx) => {
+    const members = players.filter((p) => p.teamId === teamId);
+    const defaultName =
+      members.length === 1
+        ? members[0].name
+        : members.length === 2
+          ? `${members[0].name} & ${members[1].name}`
+          : `Team ${idx + 1}`;
+    return {
+      id: teamId,
+      name: options.teamNames?.[idx] ?? defaultName,
+      playerIds: members.map((m) => m.id),
       melds: [],
       redThrees: [],
       hasMadeInitialMeld: false,
       meldedOnPriorTurnPlayerIds: [],
       cumulativeScore: 0,
       handHistory: [],
-    },
-    {
-      id: 'team-1',
-      name: teamNames[1],
-      playerIds: t1Players,
-      melds: [],
-      redThrees: [],
-      hasMadeInitialMeld: false,
-      meldedOnPriorTurnPlayerIds: [],
-      cumulativeScore: 0,
-      handHistory: [],
-    },
-  ];
+    };
+  });
 
   return dealHand({
-    schemaVersion: 1,
+    schemaVersion: 2,
     matchId,
     matchSeed,
     handSeed: matchSeed,
@@ -419,9 +395,82 @@ function recordAction(state: GameState, action: GameAction): GameState {
 
 export function applyAction(state: GameState, action: GameAction): ActionResult {
   switch (action.type) {
+    case 'ASK_PARTNER_GO_OUT': {
+      if (state.phase !== 'DRAW' && state.phase !== 'MELD_OR_DISCARD') {
+        return { ok: false, error: 'You can only ask your partner during your turn.' };
+      }
+      if (!state.ruleset.allowPartnerGoOutPrompt) {
+        return { ok: false, error: 'Partner go-out permission is only available in 4-Player Partnership.' };
+      }
+      const active = state.players[state.activePlayerIndex];
+      if (active.id !== action.playerId) {
+        return { ok: false, error: 'It is not your turn.' };
+      }
+      if (state.partnerGoOut !== null) {
+        return { ok: false, error: 'You have already asked your partner on this turn.' };
+      }
+      const partnerId = getPartnerPlayerId(state, active.id);
+      if (!partnerId) {
+        return { ok: false, error: 'You do not have a partner in this mode.' };
+      }
+      const partner = state.players.find((p) => p.id === partnerId)!;
+      let next: GameState = {
+        ...state,
+        partnerGoOut: {
+          askedByPlayerId: active.id,
+          partnerPlayerId: partner.id,
+          status: 'PENDING',
+        },
+      };
+      next = recordAction(next, action);
+      next = appendLog(
+        next,
+        active.id,
+        'partner_prompt',
+        `${active.name} asked ${partner.name}: "Partner, may I go out?"`,
+      );
+      return { ok: true, state: next };
+    }
+
+    case 'ANSWER_PARTNER_GO_OUT': {
+      if (!state.partnerGoOut || state.partnerGoOut.status !== 'PENDING') {
+        return { ok: false, error: 'There is no pending partner go-out request.' };
+      }
+      if (state.partnerGoOut.partnerPlayerId !== action.playerId) {
+        return { ok: false, error: 'Only the asked partner may answer this request.' };
+      }
+      const partner = state.players.find((p) => p.id === action.playerId)!;
+      const asker = state.players.find(
+        (p) => p.id === state.partnerGoOut!.askedByPlayerId,
+      )!;
+      let next: GameState = {
+        ...state,
+        partnerGoOut: {
+          ...state.partnerGoOut,
+          status: action.allow ? 'APPROVED' : 'DENIED',
+        },
+      };
+      next = recordAction(next, action);
+      next = appendLog(
+        next,
+        partner.id,
+        'partner_prompt',
+        action.allow
+          ? `${partner.name} answered YES — ${asker.name} is bound to go out this turn!`
+          : `${partner.name} answered NO — ${asker.name} may not go out this turn.`,
+      );
+      return { ok: true, state: next };
+    }
+
     case 'DRAW_STOCK': {
       if (state.phase !== 'DRAW') {
         return { ok: false, error: 'You can only draw during the draw phase.' };
+      }
+      if (state.partnerGoOut?.status === 'PENDING') {
+        return {
+          ok: false,
+          error: 'Waiting for your partner to answer your go-out request.',
+        };
       }
       const active = state.players[state.activePlayerIndex];
       if (active.id !== action.playerId) {
@@ -475,7 +524,7 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
 
       const activeIdx = state.activePlayerIndex;
       const active = state.players[activeIdx];
-      const teamIdx = active.teamId === 'team-0' ? 0 : 1;
+      const teamIdx = getTeamIndex(state.teams, active.teamId);
       const topCard = state.discardPile.cards[state.discardPile.cards.length - 1];
       const buried = state.discardPile.cards.slice(0, -1);
       const buriedRedThrees = buried.filter((c) => isRedThree(c));
@@ -516,21 +565,25 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
 
       const totalTaken = state.discardPile.cards.length;
       const wasFrozen =
-        state.discardPile.frozenByWildOrInitial || !state.teams[teamIdx].hasMadeInitialMeld;
+        state.discardPile.frozenByWildOrInitial ||
+        !state.teams[teamIdx].hasMadeInitialMeld;
       let takeReason: string;
       if (action.topCardUsage.kind === 'add_to_meld') {
         takeReason = `by adding ${getCardLabel(topCard)} to existing ${topCard.rank}s meld`;
       } else {
-        const usedHand = active.hand.filter((c) =>
-          action.topCardUsage.kind === 'new_meld' &&
-          action.topCardUsage.handCardIds.includes(c.id),
+        const usedHand = active.hand.filter(
+          (c) =>
+            action.topCardUsage.kind === 'new_meld' &&
+            action.topCardUsage.handCardIds.includes(c.id),
         );
         const usedWild = usedHand.some((c) => isWildCard(c));
         takeReason = usedWild
           ? `by melding ${getCardLabel(topCard)} with a matching card + wild from hand`
           : `by melding ${getCardLabel(topCard)} with a natural pair from hand`;
       }
-      const initialTag = !state.teams[teamIdx].hasMadeInitialMeld ? ' [Initial Meld]' : '';
+      const initialTag = !state.teams[teamIdx].hasMadeInitialMeld
+        ? ' [Initial Meld]'
+        : '';
       next = appendLog(
         next,
         active.id,
@@ -547,7 +600,6 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         );
       }
 
-      // If hand is now empty, player automatically went out!
       if (newHand.length === 0) {
         const concealed = !state.teams[teamIdx].meldedOnPriorTurnPlayerIds.includes(
           active.id,
@@ -562,7 +614,6 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         };
       }
 
-      // Set post-pickup undo checkpoint so any FURTHER optional melds this turn can be undone
       next = {
         ...next,
         turnUndoCheckpoint: {
@@ -581,7 +632,7 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
 
       const activeIdx = state.activePlayerIndex;
       const active = state.players[activeIdx];
-      const teamIdx = active.teamId === 'team-0' ? 0 : 1;
+      const teamIdx = getTeamIndex(state.teams, active.teamId);
       const assigned = assignStableMeldIds(check.nextMelds, state.nextMeldSeq);
 
       const teams = cloneTeams(state.teams);
@@ -604,7 +655,9 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
       };
       next = recordAction(next, action);
 
-      const prevMeldsById = new Map(state.teams[teamIdx].melds.map((m) => [m.id, m]));
+      const prevMeldsById = new Map(
+        state.teams[teamIdx].melds.map((m) => [m.id, m]),
+      );
       const summaryParts = action.submissions.map((s) => {
         if (s.kind === 'new_meld') {
           return `${s.cardIds.length}×${s.rank === '3B' ? 'Black 3' : s.rank}`;
@@ -626,7 +679,9 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
               )
               .join(' & ')}!`
           : '';
-      const initialNote = !state.teams[teamIdx].hasMadeInitialMeld ? ' [Initial Meld]' : '';
+      const initialNote = !state.teams[teamIdx].hasMadeInitialMeld
+        ? ' [Initial Meld]'
+        : '';
       next = appendLog(
         next,
         active.id,
@@ -634,7 +689,6 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         `${active.name} melded ${summaryParts.join(', ')} (${check.meldPoints} pts)${initialNote}${canastaNote}.`,
       );
 
-      // If hand reached 0 cards cleanly, player went out without needing a discard!
       if (newHand.length === 0) {
         const concealed = !state.teams[teamIdx].meldedOnPriorTurnPlayerIds.includes(
           active.id,
@@ -656,12 +710,21 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
       if (state.phase !== 'MELD_OR_DISCARD') {
         return { ok: false, error: 'Nothing to undo right now.' };
       }
+      if (state.partnerGoOut?.status === 'PENDING') {
+        return {
+          ok: false,
+          error: 'Waiting for your partner to answer your go-out request.',
+        };
+      }
       const activeIdx = state.activePlayerIndex;
       const active = state.players[activeIdx];
       if (active.id !== action.playerId) {
         return { ok: false, error: 'It is not your turn.' };
       }
-      if (!state.turnUndoCheckpoint || state.turnUndoCheckpoint.playerId !== active.id) {
+      if (
+        !state.turnUndoCheckpoint ||
+        state.turnUndoCheckpoint.playerId !== active.id
+      ) {
         return { ok: false, error: 'No melds to undo this turn.' };
       }
 
@@ -677,13 +740,24 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         meldedThisTurn: state.tookDiscardPileThisTurn,
       };
       next = recordAction(next, action);
-      next = appendLog(next, active.id, 'undo', `${active.name} undid melds from this turn.`);
+      next = appendLog(
+        next,
+        active.id,
+        'undo',
+        `${active.name} undid melds from this turn.`,
+      );
       return { ok: true, state: next };
     }
 
     case 'DISCARD': {
       if (state.phase !== 'MELD_OR_DISCARD') {
         return { ok: false, error: 'You can only discard after drawing.' };
+      }
+      if (state.partnerGoOut?.status === 'PENDING') {
+        return {
+          ok: false,
+          error: 'Waiting for your partner to answer your go-out request.',
+        };
       }
       const activeIdx = state.activePlayerIndex;
       const active = state.players[activeIdx];
@@ -699,18 +773,40 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         return { ok: false, error: 'Red 3s cannot be discarded.' };
       }
 
-      const teamIdx = active.teamId === 'team-0' ? 0 : 1;
+      const teamIdx = getTeamIndex(state.teams, active.teamId);
       const team = state.teams[teamIdx];
       const remainingHand = active.hand.filter((c) => c.id !== card.id);
       const teamCanastas = countTeamCanastas(team.melds);
 
       if (remainingHand.length === 0) {
+        if (state.partnerGoOut?.status === 'DENIED') {
+          return {
+            ok: false,
+            error: 'Your partner denied going out — you cannot go out on this turn.',
+          };
+        }
         if (teamCanastas < state.ruleset.canastasRequiredToGoOut) {
           return {
             ok: false,
             error: `You need at least ${state.ruleset.canastasRequiredToGoOut} Canasta(s) to go out.`,
           };
         }
+      }
+
+      // Binding APPROVED partner permission: must go out if legally achievable!
+      let approvedFallbackNote = false;
+      if (
+        remainingHand.length > 0 &&
+        state.partnerGoOut?.status === 'APPROVED'
+      ) {
+        if (canPlayerGoOutNow(state, active.id)) {
+          return {
+            ok: false,
+            error:
+              'Your partner approved going out — you are bound to go out on this turn.',
+          };
+        }
+        approvedFallbackNote = true;
       }
 
       const players = state.players.map((p, idx) =>
@@ -757,6 +853,14 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         'discard',
         `${active.name} discarded ${getCardLabel(card)}${suffix}.`,
       );
+      if (approvedFallbackNote) {
+        next = appendLog(
+          next,
+          active.id,
+          'partner_prompt',
+          `${active.name} could not legally go out after drawing despite partner approval — play continues.`,
+        );
+      }
 
       if (remainingHand.length === 0) {
         const concealed = !state.teams[teamIdx].meldedOnPriorTurnPlayerIds.includes(
@@ -781,6 +885,7 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
         tookDiscardPileThisTurn: false,
         meldedThisTurn: false,
         lastDrawnCardIds: [],
+        partnerGoOut: null,
       };
 
       return { ok: true, state: prepareTurnStart(next) };
@@ -789,6 +894,18 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
     case 'GO_OUT_WITHOUT_DISCARD': {
       if (state.phase !== 'MELD_OR_DISCARD') {
         return { ok: false, error: 'Not in meld/discard phase.' };
+      }
+      if (state.partnerGoOut?.status === 'PENDING') {
+        return {
+          ok: false,
+          error: 'Waiting for your partner to answer your go-out request.',
+        };
+      }
+      if (state.partnerGoOut?.status === 'DENIED') {
+        return {
+          ok: false,
+          error: 'Your partner denied going out on this turn.',
+        };
       }
       const active = state.players[state.activePlayerIndex];
       if (active.id !== action.playerId) {
@@ -820,6 +937,12 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
       if (state.phase !== 'DRAW') {
         return { ok: false, error: 'Can only pass during the draw phase.' };
       }
+      if (state.partnerGoOut?.status === 'PENDING') {
+        return {
+          ok: false,
+          error: 'Waiting for your partner to answer your go-out request.',
+        };
+      }
       const active = state.players[state.activePlayerIndex];
       if (active.id !== action.playerId) {
         return { ok: false, error: 'It is not your turn.' };
@@ -830,7 +953,8 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
       if (isMandatoryStockExhaustedTake(state, active.id)) {
         return {
           ok: false,
-          error: 'Stock is empty and the unfrozen top discard matches your meld — taking the pile is mandatory.',
+          error:
+            'Stock is empty and the unfrozen top discard matches your meld — taking the pile is mandatory.',
         };
       }
       const next = recordAction(state, action);
@@ -847,7 +971,7 @@ export function applyAction(state: GameState, action: GameAction): ActionResult 
       const [, nextHandSeed] = nextRng(state.rngState);
       const nextDealer = (state.dealerIndex + 1) % state.players.length;
       const nextState = dealHand({
-        schemaVersion: 1,
+        schemaVersion: 2,
         matchId: state.matchId,
         matchSeed: state.matchSeed,
         handSeed: nextHandSeed,
@@ -874,10 +998,10 @@ export function replayHand(
   players: PlayerConfig[],
   actions: readonly GameAction[],
   options: {
-    initialTeamScores?: [number, number];
+    initialTeamScores?: number[];
     dealerIndex?: number;
     handNumber?: number;
-    teamNames?: [string, string];
+    teamNames?: string[];
   } = {},
 ): GameState {
   let state = createMatch({
@@ -892,10 +1016,8 @@ export function replayHand(
     options.dealerIndex !== undefined ||
     options.handNumber !== undefined
   ) {
-    const t0Score = options.initialTeamScores?.[0] ?? 0;
-    const t1Score = options.initialTeamScores?.[1] ?? 0;
     state = dealHand({
-      schemaVersion: 1,
+      schemaVersion: 2,
       matchId: state.matchId,
       matchSeed: handSeed,
       handSeed,
@@ -904,10 +1026,11 @@ export function replayHand(
       dealerIndex: options.dealerIndex ?? 0,
       ruleset,
       players: state.players,
-      teams: [
-        { ...state.teams[0], cumulativeScore: t0Score, handHistory: [] },
-        { ...state.teams[1], cumulativeScore: t1Score, handHistory: [] },
-      ],
+      teams: state.teams.map((t, idx) => ({
+        ...t,
+        cumulativeScore: options.initialTeamScores?.[idx] ?? 0,
+        handHistory: [],
+      })),
       actionLog: [],
       nextLogId: 1,
       nextMeldSeq: 1,

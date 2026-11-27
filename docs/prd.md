@@ -1,135 +1,100 @@
-# Web-Based Canasta — Product Requirements Document (PRD v1.0)
+# Web-Based Canasta — Product Requirements Document (PRD v2.0)
 
 > [!IMPORTANT]
-> This PRD incorporates all decisions from our design review and alignment interview. Once approved, this document serves as the baseline for the **Software Design Document (SDD)**.
+> **Status:** All Phase 2 product decisions are locked via alignment interview. Once approved, this PRD will be synced to `docs/prd.md` and used to draft `sdd-phase2.md` for **Phase 2A** (`feat/phase-2a-multiseat`) and **Phase 2B** (`feat/phase-2b-lan-multiplayer`).
 
 ---
 
 ## 1. Product Vision & Phased Roadmap
 
-Build a polished, browser-based **Canasta** card game with a classic green casino felt table, crisp vector playing cards, strict rules enforcement, automatic scoring, and a clean headless rules engine that scales seamlessly from solo play to shared-laptop play, local phone-as-hand play, and online multiplayer.
+Build a polished, browser-based **Canasta** card game with a classic green casino felt table, crisp vector playing cards, strict rules enforcement, automatic scoring, and a pure headless rules engine that scales smoothly from solo play to shared-device play, local multi-device rooms, and online multiplayer.
 
-| Phase | Milestone | Scope |
+| Phase | Branch / PR | Status & Scope |
 | :--- | :--- | :--- |
-| **Phase 1 (MVP)** | **Browser-Only 2-Player Bicycle Canasta** | Solo vs. Heuristic Bot **and** 2-Player Pass-and-Play (privacy curtain), full Bicycle 2-player rules, automatic scoring, dynamic Rules & Scoring drawer, staged multi-meld UI with turn undo, `localStorage` auto-save/resume, match-length presets. Runs 100% in the browser (`npm run dev`). |
-| **Phase 2** | **Local Server, Phone-Hands LAN & 4-Player Partnership** | Thin Node.js + WebSocket server wrapping the exact same `src/engine` module. Adds **Laptop-as-Table + Phones-as-Hands** LAN companion mode (QR code join over local Wi-Fi) and **4-Player Partnership** (11 cards, draw 1, 1 Canasta to go out, partner permission to go out, mixed human/bot seats). |
-| **Phase 3** | **Online Multiplayer, Alternate Rulesets & Optional LLM AI** | Deploy Node.js WebSocket server for remote rooms with reconnect support; add alternate ruleset presets (Modern American, Hand & Foot, custom house rules); optional pluggable LLM Opponent / "AI Coach" controller. |
+| **Phase 1** | `main` | **SHIPPED** — Browser-only 2-Player Bicycle Canasta, 3-tier Heuristic AI (`Easy` / `Normal` / `Hard`), 2P Pass-and-Play Privacy Shield, CC0 SVG deck, dynamic Rules & Scoring drawer, staged melds + Guided Take-Discard-Pile, newly-drawn green card glow, floating announcements, Web Audio sound effects, `localStorage` auto-save/resume, replay JSON export. |
+| **Phase 2A** | `feat/phase-2a-multiseat` (PR #1) | **NEXT** — Generalize engine/AI to `teams: TeamState[]`; add **4-Player Partnership** (`2×2` with full binding *"Partner, may I go out?"*), **4-Player Cutthroat** (`4×1`), and **3-Player Cutthroat** (`3×1`); flexible human/bot seat configuration across all formats (both Solo-vs-Bots and multi-human Pass-and-Play Privacy Shield offline). |
+| **Phase 2B** | `feat/phase-2b-lan-multiplayer` (PR #2) | **PLANNED** — Thin Node.js + Socket.IO server (`server/`) hosting `src/engine/` & `src/ai/`, room lobby with QR code & 4-letter codes, **10-foot TV-ready Shared Table + Phone-Hands** LAN companion mode (works immediately via Chrome Tab Cast to Google TV Streamer / AirPlay / HDMI), separate-device full-table play, and resilient reconnect tokens. |
+| **Phase 3** | Future | Hosted internet multiplayer (public HTTPS / `wss://`) using the Phase 2B server, alternate rulesets (Modern American, Hand & Foot, custom house rules), optional pluggable LLM Opponent / "AI Coach" controller. |
+| **Phase 4** | Post-Phase 3 | Living-room native TV receivers: **Native Google Cast Web Receiver** (requires Phase 3 public HTTPS server + Cast App ID) and optional native **Apple TV (tvOS)** client consuming the exact same WebSocket `TableView` JSON protocol. |
 
 ---
 
-## 2. Functional Requirements
+## 2. Phase 1 Baseline (Shipped Summary)
 
-### 2.1 Rules Engine & Bicycle Classic Baseline
-All rules are driven by a typed `RulesetConfig` object so alternate rulesets can be added without modifying core game flow.
-
-- **Deck**: 108 cards (two standard 52-card decks + 4 Jokers).
-- **2-Player Head-to-Head (Phase 1 Default)**:
-  - **Deal**: 15 cards per player.
-  - **Turn Draw**: Draw **2 cards** from the stock (or take the entire discard pile); discard **1 card** to end turn (discard optional when melding last cards to go out).
-  - **Going Out Requirement**: At least **2 completed Canastas**.
-- **4-Player Partnership (Phase 2 Preset)**:
-  - **Deal**: 11 cards per player across 2 partnerships.
-  - **Turn Draw**: Draw **1 card** from the stock (or take the discard pile); discard **1 card**.
-  - **Going Out Requirement**: At least **1 completed Canasta** (with optional binding *"Partner, may I go out?"* prompt).
-- **Initial Discard Upcard**: Turn top stock card face-up. If it is a Wild Card (Joker or 2) or a 3 (Red or Black), turn additional cards until a natural `4–A` appears. If a Wild Card or Red 3 is turned up during setup, the discard pile starts **frozen**.
-- **Wild Cards & Valid Melds (Classic Bicycle Default)**:
-  - Jokers (`50 pts`) and 2s (`20 pts`) are wild.
-  - A valid meld requires **≥ 3 cards** of the same rank, **≥ 2 natural cards**, and **≤ 3 wild cards** (`allowWildMajorityWithinLimit: true` for classic Bicycle; strict `naturals > wilds` toggleable in `RulesetConfig` for future variants).
-  - All-wild melds are disallowed in Bicycle Classic (configurable for future variants).
-- **Red 3s (Bonus Cards)**:
-  - Dealt in starting hand: Automatically/prompted to expose on player's first turn with immediate stock replacement.
-  - Drawn from stock: Immediately exposed face-up and replaced from stock.
-  - Acquired in discard pile: Exposed face-up with **no replacement card**.
-- **Black 3s (Stop Cards)**:
-  - Discarding a Black 3 blocks/freezes the discard pile for the **next player's turn only**.
-  - Black 3s may **only be melded** (3 or 4 natural Black 3s, no wilds) on the turn the player **goes out**.
-- **Initial Meld Minimums** (determined by cumulative score at the **start of the hand**; face values only, excluding Canasta/Red 3 bonuses):
-  - `< 0` → **0 pts**
-  - `0 – 1,495` → **50 pts**
-  - `1,500 – 2,995` → **90 pts**
-  - `3,000+` → **120 pts**
-  - *When taking the discard pile for an initial meld, only the **top discard card** plus cards already in hand count toward the minimum before scooping the remaining pile.*
-- **Discard Pile & Freezing**:
-  - **Frozen** against any side without an initial meld, or frozen for **everyone** when a Wild Card is discarded (rendered sideways) or turned up on deal.
-  - **Taking Frozen Pile**: Requires holding a **natural pair** matching the top discard card in hand (no wild substitution; cannot add to an existing meld).
-  - **Taking Unfrozen Pile**: Top card must be immediately melded via (a) natural pair from hand, (b) 1 natural + 1 wild from hand, or (c) adding to an existing meld on your side.
-  - **Unclaimable Top Card**: Pile cannot be taken when the top card is a Wild Card, Black 3, or Red 3.
-- **Canastas (7+ cards of a rank)**:
-  - **Natural (Clean/Red) Canasta**: 7+ natural cards, 0 wilds (`+500 pts`; squared stack topped with a red card).
-  - **Mixed (Dirty/Black) Canasta**: 7+ cards with 1–3 wilds (`+300 pts`; squared stack topped with a black card).
-  - Adding a wild card to a Natural Canasta downgrades it to Mixed (`+500 → +300`) and triggers a **confirmation guardrail** in the UI.
-- **Ending a Hand & Stock Exhaustion**:
-  - **Going Out**: Empty hand after meeting Canasta requirement (`+100 pts`).
-  - **Going Out Concealed**: Meld entire hand (including required Canastas) in one turn with no prior melds/additions (`+200 pts` total).
-  - **Stock Exhaustion**: If the last card drawn from stock is a Red 3, expose it and end the hand immediately. Otherwise play continues without a stock; players *must* take an unfrozen discard pile if it matches an existing meld. Hand ends when a player cannot (or chooses not to) take the pile; no going-out bonus is awarded.
-- **Automatic Scoring**:
-  - **Card Values**: Joker = `50`, Ace / 2 = `20`, `8–K` = `10`, `4–7` & Black 3 = `5`.
-  - **Red 3s**: `+100` each (`+800` if all 4 collected); **`-100` each** (`-800` for all 4) if the side never made an initial meld.
-  - **Hand Total** = `(Melded card values + Canasta bonuses + Red 3 bonuses + Going Out bonus) − (Unmelded cards remaining in hand)`.
-- **Match Length Presets**:
-  - **Standard Match (Default)**: First to **5,000 points** after a completed hand.
-  - **Quick Presets**: **2,500 points** or **Single Hand**.
+All Phase 1 capabilities remain preserved on `main` and work 100% offline in the browser:
+- **Pure Headless Engine (`src/engine/`):** Enforced via `tsconfig.engine.json` (`ES2022` only). Implements full Bicycle 2P Classic (`108` cards, `15` dealt, `draw 2`, `2` Canastas to go out, `50/90/120` initial melds, classic wild limits `≥ 2` naturals / `≤ 3` wilds, Red 3 auto-exposure/replacement, Black 3 stop & go-out-only melds, Concealed Going Out `+200`, stock-exhaustion mandatory take, one-card deadlock guard, safe turn undo, seeded `replayHand()`, and strict `PlayerView` / `TableView`).
+- **3-Tier Heuristic AI (`src/ai/`):** Pluggable `PlayerController` with `Easy` (Casual), `Normal` (Balanced), and `Hard` (Patient/Strategic) verified over 500-hand soak benchmarks.
+- **Green-Felt Casino UI (`src/ui/`):** 57 vendored CC0 SVG playing cards (`public/cards/`), hover-to-front card fan, emerald glow for newly drawn cards, floating viewport-fixed announcements above the hand, explanatory Table Log, synthesized Web Audio sound effects with mute toggle, dynamic Rules & Scoring drawer, Pass-and-Play Privacy Shield (`H` hotkey), and `localStorage` auto-save/resume.
 
 ---
 
-## 3. User Experience & Interface Requirements
+## 3. Phase 2A Requirements: Multi-Seat Modes (Offline & Pass-and-Play)
 
-### 3.1 Table Aesthetic & Card Rendering
-- **Theme**: Classic **green casino felt** table with warm wood/gold accents and traditional Bicycle-style playing cards.
-- **Card Assets**: Self-hosted **CC0 / Public Domain SVG playing cards** (including distinct Red/Black Jokers and ornate card backs) wrapped in a reusable `<PlayingCard />` component.
-- **Adaptive Hand Display**:
-  - Auto-sorted by rank (with wild cards cleanly grouped) for instant scanning.
-  - Automatically wraps from 1 overlapping fan into 2 compact rows when hand size exceeds ~18 cards (common after picking up a large discard pile).
-- **Table Clarity**:
-  - **Stock Pile**: Stacked card backs with remaining count badge.
-  - **Discard Pile**: Face-up top card, pile count badge, **sideways peeking wild card + "Frozen" indicator** when frozen, and "Blocked (Black 3)" indicator when stopped.
-  - **Meld Area**: Distinct zones for Player and Opponent melds + Red 3 trays; completed Canastas squared up with Red/Black top indicator and hover/click popover to inspect all cards inside.
+### 3.1 Variable-Team Engine Generalization
+Refactor `teams` from a fixed 2-tuple (`[TeamState, TeamState]`) to a dynamic `TeamState[]` (`2`, `3`, or `4` teams) across `src/engine/`, `src/ai/`, `src/store/`, and `src/ui/` while keeping Phase 1 saved-match handling safe (bump or cleanly handle schema migration).
 
-### 3.2 Turn Interaction, Staging & Guardrails
-- **Click/Tap-to-Select Primary**: Clicking/tapping cards raises them; a contextual action bar dynamically enables valid actions (`Stage Meld`, `Add to Meld`, `Discard`, `Take Discard Pile`)—designed from Day 1 to work identically on laptop trackpads and phone touchscreens.
-- **Multi-Meld Staging & Turn Undo**:
-  - Players can stage multiple melds in one turn while seeing a live point progress indicator against their initial meld threshold (e.g., `Initial Meld: 55 / 50 pts ✓`).
-  - Melds placed from hand during the current turn can be **undone** right up until the player discards (ending the turn).
-  - Actions that reveal hidden information (drawing from stock or picking up the discard pile) **lock immediately** and cannot be undone.
-- **High-Stakes Guardrails**: Confirmation prompts before potentially costly mistakes (e.g., adding a wild card to a Natural Canasta, discarding a Wild Card, or discarding a Black 3).
-- **Bot Pacing & Move Log**:
-  - Configurable bot animation speed (Slow / Normal / Fast, default ~600 ms per discrete action) so players can clearly see each draw, Red 3 replacement, meld, and discard.
-  - Compact scrollable **Action Log** summarizing recent moves (e.g., *"CPU drew 2 cards → exposed 3♥ → melded 3×K → discarded 7♣"*).
+### 3.2 Supported Official Bicycle Formats
 
-### 3.3 Always-Accessible Rules & Scoring Reference
-- **Top-Bar "Rules & Scoring" Button**: Opens a clean slide-over drawer/modal mid-game without interrupting the hand.
-- **Dynamically Generated from `RulesetConfig`**: Guarantees displayed rules always match the active match configuration (2P vs. 4P, Bicycle vs. future alternate rulesets).
-  - **Rules Tab**: Deal/draw counts, initial meld table with the player's **current tier highlighted**, wild-card limits, freezing/taking pile rules, Canasta & going-out requirements.
-  - **Scoring Tab**: Card point values, bonus table, and live **hand-by-hand cumulative scoreboard** (including current melded points on table).
-- **End-of-Hand Breakdown Modal**: Automatically presented after every hand showing itemized Melded Cards, Natural/Mixed Canastas, Red 3s, Going Out bonus, Unmelded Hand deductions, Hand Net, and Cumulative Match Score.
+| Format | Ruleset ID | Players / Teams | Deal | Draw | Canastas to Go Out | Partner Permission |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **2-Player Classic** *(Phase 1)* | `bicycle-2p-classic` | 2 players (2×1) | 15 | 2 | 2 | N/A |
+| **3-Player Cutthroat** | `bicycle-3p-cutthroat` | 3 players (3×1) | 13 | 1 | 1 | N/A |
+| **4-Player Partnership** | `bicycle-4p-partnership` | 4 players (2×2) | 11 | 1 | 1 | **Yes (Binding)** |
+| **4-Player Cutthroat** | `bicycle-4p-cutthroat` | 4 players (4×1) | 11 | 1 | 1 | N/A |
 
-### 3.4 Shared-Device & Local Multiplayer Privacy
-- **Phase 1 — Pass-and-Play Privacy Curtain**:
-  - Immediately upon ending a turn (discarding), active hand flips face-down behind a full-screen curtain: *"Pass laptop to [Player 2] — Click or press Space to reveal hand."*
-  - Displays a brief safe summary of the previous player's public moves ("Player 1 melded 3 Jacks and discarded 9♠") plus an anytime quick-hide hotkey (`H`).
-- **Phase 2 — Laptop-as-Table + Phones-as-Hands (LAN Companion)**:
-  - Laptop hosts the shared table display (stock, discard pile, melds, scoreboard, QR code / local URL).
-  - Each player connects on their phone browser over local Wi-Fi to view and tap cards from their private hand—zero accidental peeking, zero laptop passing.
+### 3.3 4-Player Partnership Rules & Binding Partner Permission
+- **Seating & Turn Order:** `South (Seat 0)` & `North (Seat 2)` form Team 1; `West (Seat 1)` & `East (Seat 3)` form Team 2; clockwise play (`0 → 1 → 2 → 3`).
+- **Shared Partnership State:** Partners share one meld zone, one Red 3 tray, one `hasMadeInitialMeld` status, and one cumulative match score.
+- **Concealed Going Out in 4P Partnership:** Still earns `+200` if the *going-out player personally* has never melded or added to their partner's melds on an earlier turn, melds their entire hand in one turn including at least 1 Canasta, and goes out.
+- **Binding *"Partner, may I go out?"* Flow:**
+  - Optional action available to the active player on their turn (before or after drawing, before melding/discarding out) whenever their partnership can legally go out or is considering going out.
+  - Asking enters a dedicated turn sub-state awaiting the partner's binding response (`YES` or `NO`):
+    - **`YES` (Binding):** Active player **must** go out on this turn (cannot discard/end turn while keeping cards in hand if a legal go-out exists; if asked before drawing and the draw makes going out impossible, engine handles the fallback gracefully without soft-locking!).
+    - **`NO` (Binding):** Active player **cannot** go out on this turn (engine blocks emptying the hand on this turn; must keep ≥ 1 card after discarding).
+  - **Bot Partner Intelligence:**
+    - When a human asks a **Bot Partner**, the bot evaluates its own hand (e.g., says `NO` if holding big melds/high penalty points or close to a Natural Canasta while opponents aren't threatening; says `YES` if hand is light, score is favorable, or opponents are low on cards).
+    - When a **Bot Player** is able to go out and partnered with a **Human**, the bot optionally asks its human partner via a clear modal prompt (`Your partner asks: "May I go out?"` → `Yes, Go Out` / `No, Keep Playing`)!
+    - In **Pass-and-Play** with 2 human partners, asking triggers the Privacy Shield curtain briefly for the partner to answer `Yes`/`No` (or lets them click directly since it's a single binary prompt without exposing the partner's hand!).
 
-### 3.5 Persistence & Session Recovery
-- **Auto-Save (`localStorage`)**: Active match state is persisted after every committed action so accidental tab reloads or closures offer instant **Resume Match** from the start screen.
+### 3.4 Flexible Seat Configuration & Multi-Human Pass-and-Play
+- On the **Start Screen**, choosing a format (`2P`, `3P Cutthroat`, `4P Partnership`, `4P Cutthroat`) presents a clean **Seat Configurator**:
+  - Each seat can be set to **Human** (editable name) or **Bot** (`Easy` / `Normal` / `Hard`).
+  - Quick presets: e.g., in 4P Partnership: *"Solo + Bot Partner vs. 2 Bots"*, *"2 Humans (Partners) vs. 2 Bots"*, *"4 Humans (Pass-and-Play)"*.
+- Whenever ≥ 2 seats are **Human**, the Phase 1 **Privacy Shield Curtain** automatically engages between human turns (with safe public turn recaps covering all intervening bot turns too!).
+
+### 3.5 Multi-Seat Table UI & Dynamic Scoreboard
+- **4P Partnership Layout (`1280×800` friendly):** Compact seat badges for **North (Partner)**, **West**, and **East** showing hand counts, active-turn pill, and team indicator, with generous **Your Team's Melds** and **Opponents' Melds** zones.
+- **3P & 4P Cutthroat Layout:** Compact 2-panel (3P) or 3-panel (4P) opponent strip across the top showing each opponent's hand count, Red 3s, and compact clickable meld piles, with **Your Melds** below.
+- **Dynamic Scoreboard, Rules Drawer & Hand Summary:** Automatically adapts to 2, 3, or 4 team/player columns, and displays the exact active format's rules (including 4P Partner Permission rules when active).
 
 ---
 
-## 4. Technical & Architectural Principles
+## 4. Phase 2B Requirements: Local WebSocket Server & Multi-Device LAN Play
 
-- **Environment**: Native Windows development in `c:\Users\timot\Downloads\antigravity\canasta` (Node.js, npm, and Git verified installed).
-- **Tech Stack**:
-  - **Language**: Strict TypeScript across engine, AI, UI, and future server.
-  - **Frontend**: Vite + React + Tailwind CSS.
-  - **Testing**: Vitest (comprehensive unit test suite for all Bicycle Canasta rules & edge cases).
-  - **Future Server (Phase 2/3)**: Node.js + Socket.IO (or `ws`) hosting the shared `src/engine` module.
-- **Core Architectural Boundaries**:
-  1. **Headless Rules Engine (`src/engine/`)**: Zero React/DOM dependencies; pure command-driven state machine (`applyAction(state, action) -> nextState`) plus strict hidden-info filtering (`getPlayerView(state, playerId)`).
-  2. **Pluggable `PlayerController` Interface (`src/ai/`)**: Abstracts Human UI, Heuristic Bot (Phase 1), Remote WebSocket Player (Phase 2/3), and future LLM Opponent/Coach (Phase 3) behind a unified contract.
-  3. **Rule-Based Heuristic AI (Phase 1)**: Deterministic, offline, `<5 ms` evaluation covering pile-pickup profitability, initial-meld subset optimization, wild-card conservation, Natural Canasta protection, and defensive discarding (Easy / Normal difficulty presets).
+### 4.1 Server-Authoritative Architecture (`server/`)
+- Thin **Node.js + Socket.IO** server hosting `src/engine/` and `src/ai/` directly (zero rule duplication).
+- Server validates every `GameAction` against the sender's authenticated `playerId`, runs bot turns server-side with configurable pacing, and emits strictly filtered `PlayerView` (per player) and `TableView` (for shared table screens).
+- Single convenient launch script (`npm run dev:lan`) starts both the Vite client and WebSocket server on Windows, printing the machine's local LAN IPv4 address (`http://192.168.x.x:5173`).
+
+### 4.2 Two Multi-Device Modes Over One Protocol
+1. **Jackbox-Style "Shared Table + Phone Hands" (Living-Room / TV Mode):**
+   - **Host Laptop / TV (`TableView` — 10-Foot Ready):** Clean 16:9 living-room layout with larger readable cards, melds, scores, big scannable QR code, and **full Web Audio sound effects** (zero private hands ever rendered). Works immediately on a living-room TV via **Chrome "Cast Tab" to Google TV Streamer**, **AirPlay**, or HDMI, while keeping the `TableView` JSON protocol decoupled for future native Cast Receiver / Apple TV clients in Phase 4.
+   - **Phone Hand Controller (`PlayerView`):** Players scan a **QR code** or enter a **4-letter room code** on their phone browser. Opens a touch-first **Hand Controller** featuring:
+     - **Primary "Hand" Tab:** Sorted hand fan, turn banner, top discard card + quick pickup/draw/stage-meld/add-to-meld/discard thumb buttons, and Partner Permission prompt modal.
+     - **Secondary "Table / Melds" Tab + Rules Drawer:** Lets any player inspect all melds on the table, action log, active rules, and scoreboard right from their phone.
+     - **Audio Default:** Phone Controllers default to **muted** (with an unmute button) while the Shared Laptop Table plays full audio, preventing room echo.
+2. **Separate Full-Table Devices:**
+   - Players joining from separate laptops/tablets get the full desktop green-felt table + their private hand, with a 1-tap toggle between Full Table and Hand Controller modes.
+
+### 4.3 Room Lobby, Seat Claiming & Reconnect Resilience
+- Host creates a room (chooses 2P / 3P / 4P Partnership / 4P Cutthroat, match length, and Host role: **Shared Table Display** or **Play on This Device**).
+- Lobby displays a **large scannable QR code**, LAN URL, and 4-letter Room Code; joining players enter their name and claim any open seat (or swap teams in 4P Partnership). Host fills remaining seats with `Easy` / `Normal` / `Hard` bots and starts the match.
+- **Reconnect Tokens:** Each player receives a `seatToken` stored in browser `localStorage`; if a phone locks or Wi-Fi blips, reopening the page auto-rejoins their exact seat seamlessly.
+- **Disconnect Handling:** Live connection dots per seat; Host can assign a Bot to take over a dropped human seat or reopen it for rejoin.
 
 ---
 
-## 5. Next Step
-Upon your sign-off on **PRD v1.0**, we will create the **Software Design Document (SDD)** specifying exact TypeScript data models (`Card`, `Meld`, `RulesetConfig`, `GameState`, `PlayerView`, `GameAction`), state transitions, heuristic AI scoring functions, SVG card asset strategy, UI component hierarchy, and the Phase 1 implementation & test plan.
+## 5. Git & Delivery Workflow
+- **Phase 2A** ships on branch `feat/phase-2a-multiseat` → pushed to GitHub and opened as a PR via `gh pr create` for review before merging to `main`.
+- **Phase 2B** branches from updated `main` as `feat/phase-2b-lan-multiplayer` → pushed and opened as a second clean PR via `gh pr create`.
+- Next step upon approval of **PRD v2.0**: sync `docs/prd.md` and draft **`sdd-phase2.md`** (covering Phase 2A & Phase 2B technical design) for `/grill-me` review.

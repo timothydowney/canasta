@@ -17,6 +17,8 @@ export type Rank = NaturalRank | '2' | '3' | 'JOKER';
 
 export type MeldRank = NaturalRank | '3B';
 
+export type TeamId = 'team-0' | 'team-1' | 'team-2' | 'team-3';
+
 export interface Card {
   /** Unique across both decks, e.g. "d0-KH", "d1-KH", "d0-JOKER-R", "d1-JOKER-B" */
   id: string;
@@ -43,16 +45,24 @@ export interface InitialMeldThreshold {
 
 export type MatchLengthPreset = 'standard_5000' | 'quick_2500' | 'single_hand';
 
+export type RulesetId =
+  | 'bicycle-2p-classic'
+  | 'bicycle-3p-cutthroat'
+  | 'bicycle-4p-partnership'
+  | 'bicycle-4p-cutthroat';
+
 export interface RulesetConfig {
-  id: string;
+  id: RulesetId;
   name: string;
+  shortName: string;
   description: string;
-  playerCount: 2 | 4;
-  teamCount: 2;
+  playerCount: 2 | 3 | 4;
+  teamCount: 2 | 3 | 4;
   dealSize: number;
   drawCount: number;
   canastasRequiredToGoOut: number;
   winScore: number | null;
+  allowPartnerGoOutPrompt: boolean;
   initialMeldThresholds: InitialMeldThreshold[];
   minMeldSize: number;
   minNaturalsPerMeld: number;
@@ -78,9 +88,15 @@ export interface DiscardPile {
   blockedByBlackThree: boolean;
 }
 
+export interface PartnerGoOutState {
+  askedByPlayerId: string;
+  partnerPlayerId: string;
+  status: 'PENDING' | 'APPROVED' | 'DENIED';
+}
+
 export interface HandScoreBreakdown {
   handNumber: number;
-  teamId: 'team-0' | 'team-1';
+  teamId: TeamId;
   meldedCardPoints: number;
   naturalCanastaCount: number;
   naturalCanastaPoints: number;
@@ -105,12 +121,12 @@ export interface HandSummary {
   handNumber: number;
   reason: HandEndReason;
   wentOutPlayerId: string | null;
-  wentOutTeamId: 'team-0' | 'team-1' | null;
-  breakdowns: [HandScoreBreakdown, HandScoreBreakdown];
+  wentOutTeamId: TeamId | null;
+  breakdowns: HandScoreBreakdown[];
 }
 
 export interface TeamState {
-  id: 'team-0' | 'team-1';
+  id: TeamId;
   name: string;
   playerIds: string[];
   melds: Meld[];
@@ -127,7 +143,7 @@ export type BotDifficulty = 'easy' | 'normal' | 'hard';
 export interface PlayerConfig {
   id: string;
   name: string;
-  teamId: 'team-0' | 'team-1';
+  teamId: TeamId;
   kind: 'human' | 'bot';
   botDifficulty?: BotDifficulty;
 }
@@ -141,7 +157,7 @@ export interface PlayerState extends PlayerConfig {
 export interface TurnUndoCheckpoint {
   playerId: string;
   hand: Card[];
-  teams: [TeamState, TeamState];
+  teams: TeamState[];
 }
 
 export type ActionLogKind =
@@ -152,6 +168,7 @@ export type ActionLogKind =
   | 'meld'
   | 'undo'
   | 'discard'
+  | 'partner_prompt'
   | 'go_out'
   | 'hand_end'
   | 'info';
@@ -196,10 +213,12 @@ export type GameAction =
   | { type: 'DISCARD'; playerId: string; cardId: string }
   | { type: 'GO_OUT_WITHOUT_DISCARD'; playerId: string }
   | { type: 'PASS_EXHAUSTED_STOCK'; playerId: string }
+  | { type: 'ASK_PARTNER_GO_OUT'; playerId: string }
+  | { type: 'ANSWER_PARTNER_GO_OUT'; playerId: string; allow: boolean }
   | { type: 'START_NEXT_HAND' };
 
 export interface GameState {
-  schemaVersion: 1;
+  schemaVersion: 2;
   matchId: string;
   matchSeed: number;
   handSeed: number;
@@ -209,7 +228,7 @@ export interface GameState {
   dealerIndex: number;
   ruleset: RulesetConfig;
   players: PlayerState[];
-  teams: [TeamState, TeamState];
+  teams: TeamState[];
   activePlayerIndex: number;
   phase: TurnPhase;
   stock: Card[];
@@ -219,13 +238,15 @@ export interface GameState {
   meldedThisTurn: boolean;
   /** Card IDs newly added to the active player's hand this turn (from stock draw or discard pickup) */
   lastDrawnCardIds: string[];
+  /** Active binding "Partner, may I go out?" prompt/resolution for this turn (4P Partnership only) */
+  partnerGoOut: PartnerGoOutState | null;
   turnUndoCheckpoint: TurnUndoCheckpoint | null;
   actionHistory: GameAction[];
   actionLog: ActionLogEntry[];
   nextLogId: number;
   nextMeldSeq: number;
   lastHandSummary: HandSummary | null;
-  winnerTeamId: 'team-0' | 'team-1' | null;
+  winnerTeamId: TeamId | null;
 }
 
 export type ActionResult =
@@ -235,7 +256,7 @@ export type ActionResult =
 export interface PublicPlayerView {
   id: string;
   name: string;
-  teamId: 'team-0' | 'team-1';
+  teamId: TeamId;
   seatIndex: number;
   kind: 'human' | 'bot';
   botDifficulty?: BotDifficulty;
@@ -260,6 +281,9 @@ export interface LegalHints {
   canPassExhaustedStock: boolean;
   canUndoMelds: boolean;
   canGoOutWithoutDiscard: boolean;
+  canAskPartnerGoOut: boolean;
+  mustAnswerPartnerGoOut: boolean;
+  partnerGoOutStatus: 'PENDING' | 'APPROVED' | 'DENIED' | null;
   viewerCanastas: number;
   canastasRequired: number;
   initialMeldRequired: number;
@@ -273,18 +297,19 @@ export interface PlayerView {
   phase: TurnPhase;
   ruleset: RulesetConfig;
   viewerId: string;
-  viewerTeamId: 'team-0' | 'team-1';
+  viewerTeamId: TeamId;
   viewerHand: Card[];
   /** Card IDs in viewerHand that were just drawn from stock or picked up from discard this turn */
   newlyAcquiredCardIds: string[];
   activePlayerId: string;
   players: PublicPlayerView[];
-  teams: [TeamState, TeamState];
+  teams: TeamState[];
   stockCount: number;
   discardPile: DiscardPileView;
+  partnerGoOut: PartnerGoOutState | null;
   actionLog: ActionLogEntry[];
   lastHandSummary: HandSummary | null;
-  winnerTeamId: 'team-0' | 'team-1' | null;
+  winnerTeamId: TeamId | null;
   legalHints: LegalHints;
 }
 
@@ -296,10 +321,11 @@ export interface TableView {
   ruleset: RulesetConfig;
   activePlayerId: string;
   players: PublicPlayerView[];
-  teams: [TeamState, TeamState];
+  teams: TeamState[];
   stockCount: number;
   discardPile: Omit<DiscardPileView, 'isFrozenForViewer'>;
+  partnerGoOut: PartnerGoOutState | null;
   actionLog: ActionLogEntry[];
   lastHandSummary: HandSummary | null;
-  winnerTeamId: 'team-0' | 'team-1' | null;
+  winnerTeamId: TeamId | null;
 }
