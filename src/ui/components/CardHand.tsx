@@ -86,8 +86,8 @@ export const CardHand: React.FC<CardHandProps> = ({
                 return (
                   <div
                     key={card.id}
-                    className={idx === 0 ? '' : overlapClass}
-                    style={{ zIndex: isSelected ? 40 : isNew ? 25 : idx + 1 }}
+                    className={`relative transition-[z-index] ${idx === 0 ? '' : overlapClass} hover:!z-50`}
+                    style={{ zIndex: isSelected ? 40 : idx + 1 }}
                   >
                     <PlayingCard
                       card={card}
